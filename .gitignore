@@ -1,0 +1,118 @@
+# === SECURITY: NEVER COMMIT THESE ===
+# Telegram Session Files
+*.session
+*.session-journal
+
+# API Keys & Credentials
+.env
+.env.local
+.env.*.local
+config.py
+credentials.py
+secrets/
+
+# Database Files
+*.db
+*.sqlite
+*.sqlite3
+basketball_crawler.db
+
+# ChromaDB Vector Database
+chroma_db/
+vectorstore/
+
+# === LOGS & TEMPORARY FILES ===
+# Log Files  
+*.log
+logs/
+crawler.log
+basketball_crawler.log
+
+# Temporary Files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# === PYTHON CACHE ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === VIRTUAL ENVIRONMENTS ===
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+
+# === IDE & EDITOR FILES ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.vs/
+
+# === OS FILES ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# === TESTING & COVERAGE ===
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# === DOCUMENTATION ===
+.cache/
+site/
+
+# === BACKUP FILES ===
+*.bak
+*.backup
+*~
+
+# === PROJECT SPECIFIC ===
+# Test outputs
+test_results/
+test_data/
+crawl_results.json
+
+# Large files that shouldn't be in repo
+*.zip
+*.tar.gz
+*.rar 
