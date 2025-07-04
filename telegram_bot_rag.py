@@ -103,7 +103,7 @@ def check_credentials():
         missing.append("OPENAI_API_KEY")
     
     if missing:
-        print("❌ Missing credentials! Please update the following in telegram_bot_rag.py:")
+        print("[ERR] Missing credentials! Please update the following in telegram_bot_rag.py:")
         for cred in missing:
             print(f"   - {cred}")
         return False
@@ -121,8 +121,8 @@ def init_rag_system():
         )
         return vectorstore
     except Exception as e:
-        print(f"⚠️ Warning: Could not initialize RAG system: {e}")
-        print("📝 Bot will work without RAG. Use the RAG Manager to add documents first.")
+        print(f"[!] Warning: Could not initialize RAG system: {e}")
+        print("[*] Bot will work without RAG. Use the RAG Manager to add documents first.")
         return None
 
 def search_knowledge_base(vectorstore, query, k=3):
@@ -154,7 +154,7 @@ def search_knowledge_base(vectorstore, query, k=3):
         relevant_results = [(doc, score) for doc, score in final_results[:k] if score < 0.8]
         return relevant_results
     except Exception as e:
-        print(f"❌ Error searching knowledge base: {e}")
+        print(f"[ERR] Error searching knowledge base: {e}")
         return []
 
 def create_rag_prompt(user_message, context_docs, character_data=None, conversation_context=""):
@@ -255,16 +255,16 @@ def load_character_card():
     try:
         character_path = Path(CHARACTER_CARD_PATH)
         if not character_path.exists():
-            print(f"⚠️ Character card not found at {CHARACTER_CARD_PATH}")
+            print(f"[!] Character card not found at {CHARACTER_CARD_PATH}")
             return None
         
         with open(character_path, 'r', encoding='utf-8') as f:
             character_data = json.load(f)
         
-        print(f"✅ Character card loaded: {character_data.get('name', 'Unknown')}")
+        print(f"[+] Character card loaded: {character_data.get('name', 'Unknown')}")
         return character_data
     except Exception as e:
-        print(f"❌ Error loading character card: {e}")
+        print(f"[ERR] Error loading character card: {e}")
         return None
 
 def create_character_prompt(character_data):
