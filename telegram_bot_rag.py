@@ -10,6 +10,14 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 import chromadb
 
+# Memory system imports
+try:
+    from session_memory import get_memory_manager
+    MEMORY_AVAILABLE = True
+except ImportError:
+    MEMORY_AVAILABLE = False
+    print("[!] Session memory system not available")
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -27,6 +35,12 @@ USE_RAG = True  # Set to False to disable RAG and use only OpenAI
 
 # Character Card Configuration
 CHARACTER_CARD_PATH = "./cryptodevil.character.json"
+
+# Memory System Configuration
+MEMORY_DB_PATH = os.getenv('MEMORY_DB_PATH', './memory.db')
+USE_MEMORY = os.getenv('USE_MEMORY', 'True').lower() == 'true'
+MAX_SESSION_MESSAGES = int(os.getenv('MAX_SESSION_MESSAGES', '50'))
+SESSION_TIMEOUT_HOURS = int(os.getenv('SESSION_TIMEOUT_HOURS', '24'))
 
 def get_simple_nba_season(current_date):
     """Get current NBA season information with precise draft timing"""
@@ -143,8 +157,8 @@ def search_knowledge_base(vectorstore, query, k=3):
         print(f"❌ Error searching knowledge base: {e}")
         return []
 
-def create_rag_prompt(user_message, context_docs, character_data=None):
-    """Create a prompt that includes context from the knowledge base and character information"""
+def create_rag_prompt(user_message, context_docs, character_data=None, conversation_context=""):
+    """Create a prompt that includes context from the knowledge base, character information, and conversation history"""
     
     # Get current date and time (simple version)
     from datetime import datetime
@@ -159,11 +173,13 @@ NBA SEASON: {get_simple_nba_season(now)}"""
         character_context = create_character_prompt(character_data)
     
     if not context_docs:
-        # No RAG context, just character + user message
+        # No RAG context, just character + user message + memory
+        memory_section = f"\n\n{conversation_context}" if conversation_context else ""
+        
         if character_context:
             return f"""{character_context}
 
-{current_time_info}
+{current_time_info}{memory_section}
 
 IMPORTANT: Respond in FIRST PERSON as Agent Daredevil. You ARE Agent Daredevil, not an assistant helping someone else.
 
@@ -173,7 +189,7 @@ Respond as Agent Daredevil in first person, following your character guidelines 
         else:
             return f"""You are Agent Daredevil, a helpful AI assistant. Respond in FIRST PERSON.
 
-{current_time_info}
+{current_time_info}{memory_section}
 
 User: {user_message}"""
     
@@ -195,6 +211,10 @@ User: {user_message}"""
     
     if character_context:
         prompt_parts.append(character_context)
+    
+    # Add conversation memory context
+    if conversation_context:
+        prompt_parts.append(conversation_context)
     
     # God Commands section (highest priority)
     if god_commands:
@@ -366,20 +386,20 @@ if check_credentials():
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     
     # Load character card
-    print("🎭 Loading character card...")
+    print("[*] Loading character card...")
     character_data = load_character_card()
     
     # Initialize RAG system
     vectorstore = None
     if USE_RAG:
-        print("🔍 Initializing RAG system...")
+        print("[*] Initializing RAG system...")
         vectorstore = init_rag_system()
         if vectorstore:
-            print("✅ RAG system initialized successfully!")
+            print("[+] RAG system initialized successfully!")
         else:
-            print("⚠️ RAG system not available - running in basic mode")
+            print("[!] RAG system not available - running in basic mode")
     else:
-        print("📝 RAG disabled - running in basic mode")
+        print("[*] RAG disabled - running in basic mode")
     
     client = TelegramClient('session_name', API_ID, API_HASH)
 
@@ -582,22 +602,35 @@ To add documents to my knowledge base:
         if not message_text or not message_text.strip():
             return
         
-        print(f"📨 Received message: {message_text}")
+        print(f"[MSG] Received message: {message_text}")
         if event.is_group:
-            print(f"👥 Group: {event.chat.title if hasattr(event.chat, 'title') else 'Unknown'}")
+            print(f"[GRP] Group: {event.chat.title if hasattr(event.chat, 'title') else 'Unknown'}")
         
         try:
             # Send typing indicator
             async with client.action(event.chat_id, 'typing'):
                 context_docs = []
+                conversation_context = ""
+                
+                # Get memory context if available
+                if MEMORY_AVAILABLE and USE_MEMORY:
+                    try:
+                        memory_manager = get_memory_manager(MEMORY_DB_PATH, MAX_SESSION_MESSAGES, SESSION_TIMEOUT_HOURS)
+                        conversation_context = memory_manager.get_context_for_llm(event.sender_id)
+                        if conversation_context:
+                            print(f"[MEM] Retrieved conversation context for user {event.sender_id}")
+                        else:
+                            print(f"[MEM] No previous conversation found for user {event.sender_id}")
+                    except Exception as e:
+                        print(f"[ERR] Memory system error: {e}")
                 
                 # Search knowledge base if RAG is available
                 if vectorstore and USE_RAG:
-                    print(f"🔍 Searching knowledge base for: {message_text}")
+                    print(f"[RAG] Searching knowledge base for: {message_text}")
                     context_docs = search_knowledge_base(vectorstore, message_text, k=3)
                     
                     if context_docs:
-                        print(f"📚 Found {len(context_docs)} relevant documents")
+                        print(f"[RAG] Found {len(context_docs)} relevant documents")
                         # Check if any are God Commands
                         god_commands_found = []
                         regular_docs_found = []
@@ -606,19 +639,27 @@ To add documents to my knowledge base:
                             source = doc.metadata.get('source', 'Unknown')
                             if doc.metadata.get('is_god_command', False):
                                 god_commands_found.append((source, score))
-                                print(f"   ⚡ GOD COMMAND: {source} (similarity: {score:.3f})")
+                                print(f"   [GOD] GOD COMMAND: {source} (similarity: {score:.3f})")
                             else:
                                 regular_docs_found.append((source, score))
-                                print(f"   - {source} (similarity: {score:.3f})")
+                                print(f"   [DOC] {source} (similarity: {score:.3f})")
                         
                         if god_commands_found:
-                            print(f"🔥 {len(god_commands_found)} God Commands will override behavior!")
+                            print(f"[GOD] {len(god_commands_found)} God Commands will override behavior!")
                     else:
-                        print("📝 No relevant documents found in knowledge base")
+                        print("[RAG] No relevant documents found in knowledge base")
+                
+                # Store user message in memory
+                if MEMORY_AVAILABLE and USE_MEMORY:
+                    try:
+                        memory_manager.add_message(event.sender_id, "user", message_text)
+                        print(f"[MEM] Stored user message in memory")
+                    except Exception as e:
+                        print(f"[ERR] Failed to store user message: {e}")
                 
                 # Create prompt with or without context
                 if context_docs:
-                    prompt = create_rag_prompt(message_text, context_docs, character_data)
+                    prompt = create_rag_prompt(message_text, context_docs, character_data, conversation_context)
                     
                     # Check if God Commands are present
                     has_god_commands = any(doc.metadata.get('is_god_command', False) for doc, score in context_docs)
@@ -628,7 +669,7 @@ To add documents to my knowledge base:
                     else:
                         response_prefix = "🏆" if event.is_group else "🏆 "
                 else:
-                    prompt = create_rag_prompt(message_text, [], character_data)
+                    prompt = create_rag_prompt(message_text, [], character_data, conversation_context)
                     response_prefix = "🎯 " if event.is_group else "🤖 "
                 
                 # Get AI response
@@ -647,7 +688,15 @@ To add documents to my knowledge base:
                 # Format response with paragraphs if longer than 50 characters
                 formatted_response = format_response_with_paragraphs(ai_response, min_length=50)
                 
-                print(f"🤖 AI Response: {formatted_response}")
+                print(f"[AI] AI Response: {formatted_response}")
+                
+                # Store assistant response in memory
+                if MEMORY_AVAILABLE and USE_MEMORY:
+                    try:
+                        memory_manager.add_message(event.sender_id, "assistant", formatted_response)
+                        print(f"[MEM] Stored assistant response in memory")
+                    except Exception as e:
+                        print(f"[ERR] Failed to store assistant response: {e}")
                 
                 # Send the response back to Telegram with prefix
                 full_response = f"{response_prefix}{formatted_response}"
@@ -655,12 +704,12 @@ To add documents to my knowledge base:
                 
         except Exception as e:
             error_msg = f"Sorry, I encountered an error: {str(e)}"
-            print(f"❌ Error: {error_msg}")
+            print(f"[ERR] Error: {error_msg}")
             await event.respond(error_msg)
 
     async def main():
         """Main function to start the client"""
-        print("🚀 Starting Agent Daredevil - Telegram RAG Bot...")
+        print("[*] Starting Agent Daredevil - Telegram RAG Bot...")
         
         try:
             # Start the client
@@ -671,23 +720,28 @@ To add documents to my knowledge base:
             bot_name = me.first_name if me.first_name else "Agent Daredevil"
             bot_username = f"@{me.username}" if me.username else "no username"
             
-            print("✅ Client started! You are now connected.")
-            print(f"🎯 Bot Name: {bot_name}")
-            print(f"👤 Username: {bot_username}")
-            print("💬 Ready for private messages and group mentions!")
-            print("🛑 Press Ctrl+C to stop the bot.")
+            print("[+] Client started! You are now connected.")
+            print(f"[*] Bot Name: {bot_name}")
+            print(f"[*] Username: {bot_username}")
+            print("[*] Ready for private messages and group mentions!")
+            print("[*] Press Ctrl+C to stop the bot.")
             
             if character_data:
-                print(f"🎭 Character: {character_data.get('name', 'Unknown')} persona loaded")
+                print(f"[*] Character: {character_data.get('name', 'Unknown')} persona loaded")
             else:
-                print("⚠️ No character card loaded - using basic persona")
+                print("[!] No character card loaded - using basic persona")
             
             if vectorstore:
-                print("📚 RAG system is active - bot will use knowledge base for responses")
+                print("[+] RAG system is active - bot will use knowledge base for responses")
             else:
-                print("📝 RAG system not available - bot will use general knowledge only")
+                print("[!] RAG system not available - bot will use general knowledge only")
             
-            print("\n📋 Usage:")
+            if MEMORY_AVAILABLE and USE_MEMORY:
+                print("[+] Memory system is active - bot will remember conversations")
+            else:
+                print("[!] Memory system not available - conversations won't be remembered")
+            
+            print("\n[*] Usage:")
             print("  • Private chats: Send any message")
             print(f"  • Group chats: Mention '{bot_name}' or {bot_username}")
             print("  • Group chats: Reply to bot messages")
@@ -696,7 +750,7 @@ To add documents to my knowledge base:
             await client.run_until_disconnected()
             
         except Exception as e:
-            print(f"❌ Error starting client: {e}")
+            print(f"[ERR] Error starting client: {e}")
             print("Make sure your credentials are correct and try again.")
 
     if __name__ == '__main__':
@@ -704,8 +758,8 @@ To add documents to my knowledge base:
             # Run the main function
             asyncio.run(main())
         except KeyboardInterrupt:
-            print("\n👋 Bot stopped by user.")
+            print("\n[*] Bot stopped by user.")
         except Exception as e:
-            print(f"❌ Unexpected error: {e}")
+            print(f"[ERR] Unexpected error: {e}")
 else:
-    print("\n🔧 Please update your credentials and run the script again.")
+    print("\n[!] Please update your credentials and run the script again.")
