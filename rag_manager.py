@@ -220,17 +220,120 @@ def get_collection_stats():
                 "source_details": []
             }
     except Exception as e:
-        return {
-            "total_chunks": 0,
-            "unique_sources": 0,
-            "sources": [],
-            "url_chunks": 0,
-            "file_chunks": 0,
-            "god_commands": 0,
-            "nba_data_chunks": 0,
-            "source_details": [],
-            "error": str(e)
-        }
+                    return {
+                "total_chunks": 0,
+                "unique_sources": 0,
+                "sources": [],
+                "url_chunks": 0,
+                "file_chunks": 0,
+                "god_commands": 0,
+                "nba_data_chunks": 0,
+                "source_details": [],
+                "error": str(e)
+            }
+
+def get_all_chunks_with_metadata():
+    """Get all chunks from the knowledge base with their metadata"""
+    try:
+        client = init_chromadb()
+        collection = client.get_collection("telegram_bot_knowledge")
+        
+        # Get all documents with their metadata
+        results = collection.get()
+        
+        if not results['ids']:
+            return []
+        
+        chunks = []
+        for i, (doc_id, document, metadata) in enumerate(zip(results['ids'], results['documents'], results['metadatas'])):
+            # Calculate word count
+            word_count = len(document.split()) if document else 0
+            
+            # Create chunk data structure
+            chunk = {
+                'id': doc_id,
+                'content': document or "",
+                'source': metadata.get('source', 'Unknown'),
+                'source_type': metadata.get('source_type', 'file'),
+                'category': metadata.get('category', ''),
+                'tags': metadata.get('tags', ''),
+                'url': metadata.get('url', ''),
+                'timestamp': metadata.get('timestamp', ''),
+                'word_count': word_count,
+                'is_god_command': metadata.get('is_god_command', False),
+                'priority': metadata.get('priority', 0),
+                'description': metadata.get('description', ''),
+                'chunk_index': metadata.get('chunk_index', 0),
+                'chunk_count': metadata.get('chunk_count', 1)
+            }
+            chunks.append(chunk)
+        
+        return chunks
+        
+    except Exception as e:
+        st.error(f"Error retrieving chunks: {str(e)}")
+        return []
+
+def delete_chunk_by_id(chunk_id):
+    """Delete a specific chunk by its ID"""
+    try:
+        client = init_chromadb()
+        collection = client.get_collection("telegram_bot_knowledge")
+        
+        # Check if chunk exists
+        try:
+            existing = collection.get(ids=[chunk_id])
+            if not existing['ids']:
+                return False, "Chunk not found"
+        except:
+            return False, "Chunk not found"
+        
+        # Delete the chunk
+        collection.delete(ids=[chunk_id])
+        return True, "Chunk deleted successfully"
+        
+    except Exception as e:
+        return False, f"Error deleting chunk: {str(e)}"
+
+def update_chunk_content(chunk_id, new_content, metadata_updates=None):
+    """Update the content of a specific chunk"""
+    try:
+        client = init_chromadb()
+        collection = client.get_collection("telegram_bot_knowledge")
+        
+        # Get existing chunk
+        try:
+            existing = collection.get(ids=[chunk_id])
+            if not existing['ids']:
+                return False, "Chunk not found"
+        except:
+            return False, "Chunk not found"
+        
+        # Get existing metadata and update it
+        existing_metadata = existing['metadatas'][0]
+        if metadata_updates:
+            existing_metadata.update(metadata_updates)
+        
+        # Update timestamp
+        existing_metadata['timestamp'] = datetime.now().isoformat()
+        
+        # Delete old chunk and add updated one
+        collection.delete(ids=[chunk_id])
+        
+        # Re-embed the new content
+        embeddings = init_embeddings()
+        
+        # Add the updated chunk
+        collection.add(
+            documents=[new_content],
+            metadatas=[existing_metadata],
+            ids=[chunk_id]
+        )
+        
+        return True, "Chunk updated successfully"
+        
+    except Exception as e:
+        return False, f"Error updating chunk: {str(e)}"
 
 def delete_source(source_name):
     """Delete all chunks from a specific source"""
