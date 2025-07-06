@@ -16,6 +16,8 @@ from bs4 import BeautifulSoup
 import re
 import aiohttp
 from urllib.parse import quote_plus
+import time
+import functools
 
 # Memory system imports
 try:
@@ -32,6 +34,98 @@ try:
 except ImportError:
     MULTI_DOMAIN_AVAILABLE = False
     print("[!] Multi-domain RAG system not available")
+
+# Failsafe Configuration - Hierarchical Timeout System
+MAX_RESPONSE_TIME = 45  # Maximum time for entire response generation (seconds)
+LLM_TIMEOUT = 30  # OpenAI API timeout (should be less than MAX_RESPONSE_TIME)
+WEB_SEARCH_TIMEOUT = 15  # Web search timeout (should be less than LLM_TIMEOUT)
+HTTP_REQUEST_TIMEOUT = 10  # Individual HTTP request timeout
+MAX_RETRIES = 2  # Maximum retries for failed operations
+CIRCUIT_BREAKER_THRESHOLD = 5  # Number of failures before circuit breaker opens
+CIRCUIT_BREAKER_TIMEOUT = 300  # Circuit breaker timeout (seconds)
+
+# Circuit breaker state
+circuit_breaker_state = {
+    'web_search_failures': 0,
+    'rag_search_failures': 0,
+    'llm_failures': 0,
+    'last_failure_time': None,
+    'circuit_open': False
+}
+
+def circuit_breaker_check(service_name: str) -> bool:
+    """Check if circuit breaker allows operation for a service"""
+    failures = circuit_breaker_state.get(f'{service_name}_failures', 0)
+    
+    if failures >= CIRCUIT_BREAKER_THRESHOLD:
+        if circuit_breaker_state.get('last_failure_time'):
+            time_since_failure = time.time() - circuit_breaker_state['last_failure_time']
+            if time_since_failure < CIRCUIT_BREAKER_TIMEOUT:
+                circuit_breaker_state['circuit_open'] = True
+                return False
+            else:
+                # Reset circuit breaker after timeout
+                circuit_breaker_state[f'{service_name}_failures'] = 0
+                circuit_breaker_state['circuit_open'] = False
+                return True
+    
+    return True
+
+def record_failure(service_name: str):
+    """Record a failure for circuit breaker tracking"""
+    if f'{service_name}_failures' not in circuit_breaker_state:
+        circuit_breaker_state[f'{service_name}_failures'] = 0
+    circuit_breaker_state[f'{service_name}_failures'] += 1
+    circuit_breaker_state['last_failure_time'] = time.time()
+
+def record_success(service_name: str):
+    """Record a success for circuit breaker tracking"""
+    if f'{service_name}_failures' not in circuit_breaker_state:
+        circuit_breaker_state[f'{service_name}_failures'] = 0
+    circuit_breaker_state[f'{service_name}_failures'] = max(0, circuit_breaker_state[f'{service_name}_failures'] - 1)
+
+def with_timeout(timeout_seconds: int):
+    """Decorator to add timeout to async functions"""
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_seconds)
+            except asyncio.TimeoutError:
+                raise asyncio.TimeoutError(f"Operation timed out after {timeout_seconds} seconds")
+        return wrapper
+    return decorator
+
+def validate_assessment_result(assessment: Dict) -> Dict:
+    """Validate and sanitize assessment results"""
+    if not isinstance(assessment, dict):
+        return {
+            'confidence': 0.0,
+            'recommendation': 'basic_response',
+            'reason': 'Invalid assessment format'
+        }
+    
+    # Ensure required fields exist with safe defaults
+    assessment.setdefault('confidence', 0.0)
+    assessment.setdefault('recommendation', 'basic_response')
+    assessment.setdefault('reason', 'No reason provided')
+    
+    # Validate confidence is a number between 0 and 1
+    try:
+        confidence = float(assessment['confidence'])
+        assessment['confidence'] = max(0.0, min(1.0, confidence))
+    except (ValueError, TypeError):
+        assessment['confidence'] = 0.0
+    
+    # Validate recommendation is a valid option
+    valid_recommendations = [
+        'use_rag_only', 'web_search', 'use_rag_with_web_fallback', 
+        'ask_for_clarification', 'basic_response'
+    ]
+    if assessment['recommendation'] not in valid_recommendations:
+        assessment['recommendation'] = 'basic_response'
+    
+    return assessment
 
 def safe_print(message=""):
     """Print message with Unicode error handling"""
@@ -128,9 +222,9 @@ def check_credentials():
         missing.append("OPENAI_API_KEY")
     
     if missing:
-        print("[ERR] Missing credentials! Please update the following in telegram_bot_rag.py:")
+        safe_print("[ERR] Missing credentials! Please update the following in telegram_bot_rag.py:")
         for cred in missing:
-            print(f"   - {cred}")
+            safe_print(f"   - {cred}")
         return False
     
     return True
@@ -146,8 +240,8 @@ def init_rag_system():
         )
         return vectorstore
     except Exception as e:
-        print(f"[!] Warning: Could not initialize RAG system: {e}")
-        print("[*] Bot will work without RAG. Use the RAG Manager to add documents first.")
+        safe_print(f"[!] Warning: Could not initialize RAG system: {e}")
+        safe_print("[*] Bot will work without RAG. Use the RAG Manager to add documents first.")
         return None
 
 def search_knowledge_base(vectorstore, query, k=3):
@@ -179,7 +273,7 @@ def search_knowledge_base(vectorstore, query, k=3):
         relevant_results = [(doc, score) for doc, score in final_results[:k] if score < 0.8]
         return relevant_results
     except Exception as e:
-        print(f"[ERR] Error searching knowledge base: {e}")
+        safe_print(f"[ERR] Error searching knowledge base: {e}")
         return []
 
 def create_rag_prompt(user_message, context_docs, character_data=None, conversation_context=""):
@@ -280,16 +374,16 @@ def load_character_card():
     try:
         character_path = Path(CHARACTER_CARD_PATH)
         if not character_path.exists():
-            print(f"[!] Character card not found at {CHARACTER_CARD_PATH}")
+            safe_print(f"[!] Character card not found at {CHARACTER_CARD_PATH}")
             return None
         
         with open(character_path, 'r', encoding='utf-8') as f:
             character_data = json.load(f)
         
-        print(f"[+] Character card loaded: {character_data.get('name', 'Unknown')}")
+        safe_print(f"[+] Character card loaded: {character_data.get('name', 'Unknown')}")
         return character_data
     except Exception as e:
-        print(f"[ERR] Error loading character card: {e}")
+        safe_print(f"[ERR] Error loading character card: {e}")
         return None
 
 def create_character_prompt(character_data):
@@ -405,75 +499,121 @@ def format_response_with_paragraphs(text, min_length=50):
     # Join paragraphs with double newlines for clear separation
     return '\n\n'.join(paragraphs)
 
-# Add web search functionality
+# Add web search functionality with failsafes
+@with_timeout(WEB_SEARCH_TIMEOUT)
 async def search_web(query: str, max_results: int = 3) -> List[Dict[str, str]]:
-    """Search the web for information about a query using multiple methods"""
-    try:
-        safe_print(f"[WEB] Searching web for: {query}")
-        
-        # Method 1: Try Wikipedia API for general knowledge
-        try:
-            wikipedia_results = await search_wikipedia(query, max_results=2)
-            if wikipedia_results:
-                safe_print(f"[WEB] Found {len(wikipedia_results)} Wikipedia results")
-                return wikipedia_results
-        except Exception as e:
-            safe_print(f"[WEB] Wikipedia search failed: {e}")
-        
-        # Method 2: Try DuckDuckGo with different approach
-        try:
-            search_url = f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json&pretty=1&no_html=1&skip_disambig=1"
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(search_url, timeout=15, headers=headers) as response:
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                            results = []
-                            
-                            # Get abstract/summary
-                            if data.get('Abstract') and len(data['Abstract']) > 20:
-                                results.append({
-                                    'title': data.get('AbstractText', 'Search Result'),
-                                    'content': data.get('Abstract'),
-                                    'url': data.get('AbstractURL', 'https://duckduckgo.com/')
-                                })
-                            
-                            # Get related topics
-                            if data.get('RelatedTopics'):
-                                for topic in data.get('RelatedTopics', [])[:2]:
-                                    if isinstance(topic, dict) and topic.get('Text'):
-                                        results.append({
-                                            'title': 'Related Information',
-                                            'content': topic.get('Text'),
-                                            'url': topic.get('FirstURL', 'https://duckduckgo.com/')
-                                        })
-                            
-                            if results:
-                                safe_print(f"[WEB] Found {len(results)} DuckDuckGo results")
-                                return results
-                        except Exception as json_error:
-                            safe_print(f"[WEB] Failed to parse DuckDuckGo JSON: {json_error}")
-                    else:
-                        safe_print(f"[WEB] DuckDuckGo returned status {response.status}")
-        except Exception as e:
-            safe_print(f"[WEB] DuckDuckGo search failed: {e}")
-        
-        # Method 3: Create a fallback response with search suggestions
-        safe_print("[WEB] Creating fallback search response")
-        return [{
-            'title': 'Web Search Suggestion',
-            'content': f"I wasn't able to search the web for current information about '{query}'. For the most up-to-date statistics and information, I recommend checking official sources like ESPN.com, NBA.com, Formula1.com, or other sports websites.",
-            'url': 'https://www.google.com/search?q=' + quote_plus(query)
-        }]
-    
-    except Exception as e:
-        safe_print(f"[WEB] Critical web search error: {e}")
+    """Search the web for information about a query using multiple methods with failsafes"""
+    # Check circuit breaker
+    if not circuit_breaker_check('web_search'):
+        safe_print("[WEB] Circuit breaker open - skipping web search")
         return []
+    
+    # Input validation
+    if not query or not query.strip():
+        safe_print("[WEB] Empty query provided")
+        return []
+    
+    if len(query) > 500:  # Prevent excessively long queries
+        query = query[:500]
+        safe_print("[WEB] Query truncated to 500 characters")
+    
+    max_results = max(1, min(max_results, 10))  # Limit results between 1-10
+    
+    retry_count = 0
+    while retry_count <= MAX_RETRIES:
+        try:
+            safe_print(f"[WEB] Searching web for: {query}")
+            
+            # Method 1: Try Wikipedia API for general knowledge
+            try:
+                wikipedia_results = await search_wikipedia(query, max_results=2)
+                if wikipedia_results:
+                    safe_print(f"[WEB] Found {len(wikipedia_results)} Wikipedia results")
+                    record_success('web_search')
+                    return wikipedia_results
+            except Exception as e:
+                safe_print(f"[WEB] Wikipedia search failed: {e}")
+            
+            # Method 2: Try DuckDuckGo with different approach
+            try:
+                search_url = f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json&pretty=1&no_html=1&skip_disambig=1"
+                
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                
+                timeout = aiohttp.ClientTimeout(total=15, connect=5)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(search_url, headers=headers) as response:
+                        if response.status == 200:
+                            try:
+                                data = await response.json()
+                                results = []
+                                
+                                # Get abstract/summary
+                                if data.get('Abstract') and len(data['Abstract']) > 20:
+                                    results.append({
+                                        'title': data.get('AbstractText', 'Search Result')[:200],
+                                        'content': data.get('Abstract')[:500],
+                                        'url': data.get('AbstractURL', 'https://duckduckgo.com/')
+                                    })
+                                
+                                # Get related topics
+                                if data.get('RelatedTopics'):
+                                    for topic in data.get('RelatedTopics', [])[:2]:
+                                        if isinstance(topic, dict) and topic.get('Text'):
+                                            results.append({
+                                                'title': 'Related Information',
+                                                'content': topic.get('Text')[:500],
+                                                'url': topic.get('FirstURL', 'https://duckduckgo.com/')
+                                            })
+                                
+                                if results:
+                                    safe_print(f"[WEB] Found {len(results)} DuckDuckGo results")
+                                    record_success('web_search')
+                                    return results
+                            except Exception as json_error:
+                                safe_print(f"[WEB] Failed to parse DuckDuckGo JSON: {json_error}")
+                        else:
+                            safe_print(f"[WEB] DuckDuckGo returned status {response.status}")
+            except Exception as e:
+                safe_print(f"[WEB] DuckDuckGo search failed: {e}")
+            
+            # Method 3: Create a fallback response with search suggestions
+            safe_print("[WEB] Creating fallback search response")
+            fallback_result = [{
+                'title': 'Web Search Suggestion',
+                'content': f"I wasn't able to search the web for current information about '{query}'. For the most up-to-date statistics and information, I recommend checking official sources like ESPN.com, NBA.com, Formula1.com, or other sports websites.",
+                'url': 'https://www.google.com/search?q=' + quote_plus(query)
+            }]
+            
+            # Don't record success for fallback, but don't record failure either
+            return fallback_result
+            
+        except asyncio.TimeoutError:
+            safe_print(f"[WEB] Timeout error for query: {query}")
+            if retry_count < MAX_RETRIES:
+                retry_count += 1
+                safe_print(f"[WEB] Retrying ({retry_count}/{MAX_RETRIES})")
+                await asyncio.sleep(2)
+                continue
+            else:
+                record_failure('web_search')
+                return []
+        except Exception as e:
+            safe_print(f"[WEB] Error in web search: {e}")
+            if retry_count < MAX_RETRIES:
+                retry_count += 1
+                safe_print(f"[WEB] Retrying ({retry_count}/{MAX_RETRIES})")
+                await asyncio.sleep(1)
+                continue
+            else:
+                record_failure('web_search')
+                return []
+    
+    # If we get here, all retries failed
+    record_failure('web_search')
+    return []
 
 async def search_wikipedia(query: str, max_results: int = 2) -> List[Dict[str, str]]:
     """Search Wikipedia for information"""
@@ -575,7 +715,36 @@ def _detect_statistical_query(query: str) -> bool:
         r'which\s+.*\s+(scored|had|achieved|won)\s+.*\s+(points|goals|games)',
         r'(schedule|fixture|calendar)\s+for',
         r'(results|scores|standings)\s+(from|for|of)',
-        r'(performance|record)\s+(in|during|for)\s+\d{4}'
+        r'(performance|record)\s+(in|during|for)\s+\d{4}',
+        # FIX: Add patterns for "specifics on", "details about", etc.
+        r'specifics?\s+on',  # "specifics on engineering upgrades"
+        r'details?\s+(about|on)',  # "details about/on upgrades"
+        r'information\s+(about|on)',  # "information about upgrades"
+        r'what.*specifics',  # "what specifics can you share"
+        r'can\s+you\s+(share|tell|provide).*details',  # "can you share details"
+        r'breakdown\s+(of|for)',  # "breakdown of upgrades"
+        r'analysis\s+(of|for)',  # "analysis of performance"
+        
+        # NEW: Add patterns for recommendations, betting, predictions
+        r'(give|provide|suggest|offer)\s+.*recommendations?',  # "give me recommendations"
+        r'recommendations?\s+(for|about|on)',  # "recommendations for betting"
+        r'(betting|bet|gambling)\s+(tips|advice|recommendations?|suggestions?)',  # "betting tips"
+        r'place\s+(bets?|wagers?)',  # "place bets on the game"
+        r'(predictions?|forecast|predict)\s+(for|about|on)',  # "predictions for the race"
+        r'who\s+(will|should|might)\s+(win|lose)',  # "who will win the race"
+        r'odds\s+(for|on|of)',  # "odds for the game"
+        r'tips\s+(for|on|about)',  # "tips for betting"
+        r'advice\s+(for|on|about)',  # "advice on the race"
+        r'(fantasy|pick.*em)\s+(advice|tips|picks)',  # "fantasy advice"
+        
+        # NEW: F1/Sports schedule and current event patterns
+        r'race\s+(this|next)\s+(sunday|weekend|week)',  # "race this Sunday"
+        r'(game|match|race)\s+(today|tomorrow|tonight)',  # "game today"
+        r'(what|which)\s+.*\s+(playing|racing)\s+(today|tomorrow|sunday)',  # "what team playing today"
+        r'schedule\s+(for|this)\s+(week|weekend|today|tomorrow)',  # "schedule for this week"
+        r'(current|upcoming|next)\s+(race|game|match)',  # "current race"
+        r'what.*happening\s+(today|tomorrow|sunday|this weekend)',  # "what's happening this Sunday"
+        r'think\s+about.*\s+(race|game|match)',  # "think about the race"
     ]
     
     query_lower = query.lower()
@@ -761,6 +930,410 @@ def _assess_rag_sufficiency(query: str, rag_context: List[Tuple[Any, float]]) ->
             'confidence': 0.2,
             'recommendation': 'web_search'
         }
+
+def _classify_query_type(user_message: str) -> str:
+    """Classify the type of query for specific redirect suggestions"""
+    query_lower = user_message.lower()
+    
+    # Current stats patterns
+    current_patterns = [
+        r'this\s+(season|year)', r'current.*stats', r'how\s+many.*this', 
+        r'what.*average.*this', r'standings.*now', r'right\s+now',
+        r'so\s+far\s+this', r'currently', r'at\s+the\s+moment'
+    ]
+    
+    # Historical patterns  
+    historical_patterns = [
+        r'\b(19|20)\d{2}\b', r'in.*\d{4}', r'back\s+in', r'used\s+to',
+        r'career.*stats', r'all.*time.*record', r'throughout.*career',
+        r'historically', r'over.*years'
+    ]
+    
+    # News patterns
+    news_patterns = [
+        r'what.*happened', r'latest.*news', r'recently', r'last.*race',
+        r'got.*traded', r'signed.*with', r'breaking.*news', r'just.*announced',
+        r'yesterday', r'today', r'this.*week'
+    ]
+    
+    # Schedule patterns
+    schedule_patterns = [
+        r'when.*next', r'schedule.*for', r'what.*time', r'upcoming.*games',
+        r'when.*is.*the', r'what.*day', r'tomorrow.*race', r'this.*weekend'
+    ]
+    
+    # Comparison patterns
+    comparison_patterns = [
+        r'better.*than', r'vs\.?', r'versus', r'compare.*to', r'who.*best',
+        r'which.*is.*better', r'stronger.*than', r'faster.*than'
+    ]
+    
+    # Prediction patterns
+    prediction_patterns = [
+        r'who.*will.*win', r'predict', r'odds.*for', r'chances.*of',
+        r'going.*to.*win', r'likely.*to', r'think.*will'
+    ]
+    
+    # Check patterns and return classification
+    if any(re.search(p, query_lower) for p in current_patterns):
+        return 'current_stats'
+    elif any(re.search(p, query_lower) for p in historical_patterns):
+        return 'historical_stats'
+    elif any(re.search(p, query_lower) for p in news_patterns):
+        return 'news_events'
+    elif any(re.search(p, query_lower) for p in schedule_patterns):
+        return 'schedule'
+    elif any(re.search(p, query_lower) for p in comparison_patterns):
+        return 'comparison'
+    elif any(re.search(p, query_lower) for p in prediction_patterns):
+        return 'prediction'
+    else:
+        return 'general'
+
+def _detect_sport_domain(user_message: str) -> str:
+    """Detect if query is F1, NBA, or general sports"""
+    query_lower = user_message.lower()
+    
+    f1_keywords = [
+        'f1', 'formula', 'race', 'driver', 'hamilton', 'verstappen', 'mercedes', 'ferrari',
+        'red bull', 'mclaren', 'aston martin', 'pole position', 'championship', 'grand prix',
+        'silverstone', 'monaco', 'spa', 'monza', 'qualifying', 'drs', 'pit stop'
+    ]
+    nba_keywords = [
+        'nba', 'basketball', 'lakers', 'celtics', 'lebron', 'jordan', 'points', 'assists',
+        'rebounds', 'mvp', 'playoffs', 'finals', 'warriors', 'nets', 'heat', 'bulls',
+        'scoring', 'three-pointer', 'dunk', 'coach', 'trade', 'draft'
+    ]
+    
+    f1_score = sum(1 for keyword in f1_keywords if keyword in query_lower)
+    nba_score = sum(1 for keyword in nba_keywords if keyword in query_lower)
+    
+    if f1_score > nba_score and f1_score > 0:
+        return 'f1'
+    elif nba_score > 0:
+        return 'nba'
+    else:
+        return 'general'
+
+def _get_current_stats_redirect(sport_domain: str) -> str:
+    """Get redirect message for current stats queries"""
+    if sport_domain == 'f1':
+        return """I don't have access to current season statistics that update in real-time.
+
+For the most up-to-date F1 stats, I'd recommend:
+🏎️ **Formula1.com** - Official standings, driver stats, and race results
+🏎️ **ESPN F1** - Comprehensive current season analysis  
+🏎️ **Team websites** - Mercedes, Red Bull, Ferrari for detailed team stats
+
+Alternatively, I can help you with:
+• Historical F1 achievements and records
+• How the points system works
+• Technical aspects of Formula 1
+• Driver backgrounds and career highlights
+• Championship history and memorable races
+
+What specific aspect of F1 would you like to explore instead?"""
+    elif sport_domain == 'nba':
+        return """I don't have access to current season statistics that update in real-time.
+
+For the most up-to-date NBA stats, I'd recommend:
+🏀 **NBA.com** - Official stats, standings, and player performance
+🏀 **ESPN.com** - Current season analysis and team breakdowns
+🏀 **Basketball-Reference.com** - Detailed statistical breakdowns
+
+Alternatively, I can help you with:
+• Historical NBA achievements and records  
+• How different stats categories work
+• Player backgrounds and career highlights
+• Championship history and legendary games
+• Understanding basketball strategies and rules
+
+What specific aspect of basketball would you like to explore instead?"""
+    else:
+        return """I don't have access to current season statistics that update in real-time.
+
+For up-to-date sports stats, I'd recommend:
+📊 **ESPN.com** - Comprehensive current sports coverage
+📊 **Official league websites** - Most accurate current data
+📊 **Team websites** - Direct from the source
+
+Alternatively, I can help you with:
+• Historical achievements and records
+• How different sports work
+• General sports knowledge and trivia
+• Background information on teams and athletes
+
+What specific aspect would you like to explore instead?"""
+
+def _get_historical_stats_redirect(sport_domain: str) -> str:
+    """Get redirect message for historical stats queries"""
+    if sport_domain == 'f1':
+        return """I have some historical F1 data, but I might not have the exact detailed statistics you're looking for from that specific period.
+
+For comprehensive historical F1 data, try:
+📊 **StatsF1.com** - Detailed historical race and championship data
+📊 **Formula1.com** - Official historical records and archives
+📊 **Racing-Reference.info** - Extensive historical racing statistics
+
+I can help you with:
+• Major career achievements and milestones
+• Championship victories and memorable races
+• Context about what made certain seasons significant
+• Comparisons with other great drivers and eras
+• Technical evolution of Formula 1
+
+What specific aspect of F1 history interests you most?"""
+    elif sport_domain == 'nba':
+        return """I have some historical NBA data, but I might not have the exact detailed statistics you're looking for from that specific period.
+
+For precise historical NBA stats, try:
+📊 **Basketball-Reference.com** - The gold standard for NBA historical data
+📊 **NBA.com** - Official historical records and archives
+📊 **ESPN.com** - Historical analysis and context
+
+I can help you with:
+• Major career achievements and milestones
+• Championship runs and legendary performances
+• Context about what made certain seasons special
+• Comparisons with other great players and eras
+• Evolution of basketball over the decades
+
+What specific aspect of NBA history interests you most?"""
+    else:
+        return """I have some historical sports data, but I might not have the exact detailed statistics you're looking for from that specific time period.
+
+For comprehensive historical sports data, try:
+📊 **Sports-Reference.com** - Detailed historical data across multiple sports
+📊 **Official league websites** - Historical archives and records
+📊 **ESPN.com** - Historical analysis and context
+
+I can help you with:
+• Major achievements and milestones
+• Championship moments and legendary performances  
+• Context about significant periods in sports
+• General sports history and evolution
+
+What specific aspect of sports history interests you most?"""
+
+def _get_news_events_redirect(sport_domain: str) -> str:
+    """Get redirect message for news and current events queries"""
+    if sport_domain == 'f1':
+        return """I don't have access to real-time news or recent events that happened after my last update.
+
+For breaking F1 news and recent developments:
+📺 **Formula1.com** - Official race reports and breaking news
+📺 **ESPN F1** - Immediate race coverage and analysis
+📺 **Motorsport.com** - Comprehensive F1 journalism
+📺 **Sky Sports F1** - Live coverage and expert analysis
+
+I can help you with:
+• Background context on drivers, teams, and storylines
+• Technical explanations of F1 concepts
+• Historical context for ongoing narratives
+• General information about how F1 works
+
+Is there a specific driver, team, or F1 concept you'd like to know more about?"""
+    elif sport_domain == 'nba':
+        return """I don't have access to real-time news or recent events that happened after my last update.
+
+For breaking NBA news and recent developments:
+📺 **ESPN.com** - Immediate NBA news and analysis
+📺 **NBA.com** - Official league announcements  
+📺 **The Athletic** - In-depth NBA journalism
+📺 **Shams Charania & Adrian Wojnarowski** on Twitter - Breaking news
+
+I can help you with:
+• Background context on players, teams, and storylines
+• Explaining NBA rules, strategies, and concepts
+• Historical context for ongoing narratives
+• General information about how the NBA works
+
+Is there a specific player, team, or basketball concept you'd like to know more about?"""
+    else:
+        return """I don't have access to real-time news or recent events that happened after my last update.
+
+For breaking sports news and recent developments:
+📺 **ESPN.com** - Comprehensive sports news coverage
+📺 **Official league websites** - Direct announcements
+📺 **Sports journalism apps** - Real-time notifications
+
+I can help you with:
+• Background context on athletes, teams, and storylines
+• Explaining sports rules, strategies, and concepts
+• Historical context for ongoing narratives
+• General sports knowledge and information
+
+Is there a specific sport, team, or concept you'd like to know more about?"""
+
+def _get_schedule_redirect(sport_domain: str) -> str:
+    """Get redirect message for schedule queries"""
+    if sport_domain == 'f1':
+        return """I don't have access to real-time schedules or current calendar information.
+
+For up-to-date F1 schedules:
+📅 **Formula1.com** - Official race calendar with session times
+📅 **ESPN F1** - Race schedules with timezone conversions
+📅 **F1 Mobile App** - Personalized notifications and reminders
+📅 **Your local TV guide** - Broadcasting schedules
+
+I can help you understand:
+• How F1 race weekends are typically structured
+• What happens during practice, qualifying, and race sessions
+• General timing of the F1 season
+• Time zone considerations for international races
+
+Would you like to know more about how F1 race weekends work or what typically happens during this time of year?"""
+    elif sport_domain == 'nba':
+        return """I don't have access to real-time schedules or current calendar information.
+
+For up-to-date NBA schedules:
+📅 **NBA.com** - Official game schedules and times
+📅 **ESPN.com** - Game schedules with TV information
+📅 **NBA Mobile App** - Personalized team notifications
+📅 **Your team's official website** - Detailed schedule information
+
+I can help you understand:
+• How NBA seasons are typically structured
+• What happens during regular season vs playoffs
+• General timing of different NBA events
+• How scheduling works across time zones
+
+Would you like to know more about how the NBA season format works or what typically happens during this time of year?"""
+    else:
+        return """I don't have access to real-time schedules or current calendar information.
+
+For up-to-date sports schedules:
+📅 **ESPN.com** - Multi-sport schedule coverage
+📅 **Official league websites** - Most accurate scheduling
+📅 **Sports apps** - Personalized notifications
+📅 **Local sports media** - Regional coverage
+
+I can help you understand:
+• How different sports seasons are structured
+• General timing of championships and playoffs
+• How scheduling typically works
+• What to expect during different parts of seasons
+
+Would you like to know more about how a particular sport's season works?"""
+
+def _get_comparison_redirect(sport_domain: str) -> str:
+    """Get redirect message for comparison queries"""
+    if sport_domain == 'f1':
+        return """That's a fascinating F1 comparison! I can share some historical context and career highlights, but detailed current performance comparisons need up-to-date data.
+
+For detailed current F1 comparisons:
+📊 **Formula1.com** - Official driver and team statistics
+📊 **ESPN F1** - Head-to-head analysis tools
+📊 **F1 comparison websites** - Side-by-side statistical breakdowns
+
+I can help you explore:
+• Historical achievements and career milestones
+• Different eras of Formula 1 and how they compare
+• What makes each driver's style unique
+• The context behind their biggest accomplishments
+• Technical differences between teams and cars
+
+What specific aspects would you like me to compare - their careers, driving styles, achievements, or impact on F1?"""
+    elif sport_domain == 'nba':
+        return """That's a fascinating NBA comparison! I can share some historical context and career highlights, but detailed current performance comparisons need up-to-date stats.
+
+For detailed current NBA comparisons:
+📊 **NBA.com** - Official player comparison tools
+📊 **ESPN.com** - Head-to-head statistical analysis
+📊 **Basketball-Reference.com** - Advanced statistical comparisons
+
+I can help you explore:
+• Historical achievements and career milestones
+• Different eras of basketball and how they compare
+• What makes each player's style unique
+• The context behind their biggest accomplishments
+• How different positions and roles compare
+
+What specific aspects would you like me to compare - their careers, playing styles, achievements, or impact on basketball?"""
+    else:
+        return """That's a fascinating comparison! I can share some historical context and career highlights, but detailed current performance comparisons need up-to-date stats.
+
+For detailed current sports comparisons:
+📊 **ESPN.com** - Multi-sport comparison tools
+📊 **Official league websites** - Statistical breakdowns
+📊 **Sports analytics sites** - Advanced comparison metrics
+
+I can help you explore:
+• Historical achievements and career milestones
+• Different eras and how they compare
+• What makes each athlete unique
+• The context behind their biggest accomplishments
+• How different sports and positions compare
+
+What specific aspects would you like me to compare - their careers, styles, achievements, or impact on their sport?"""
+
+def _get_prediction_redirect(sport_domain: str) -> str:
+    """Get redirect message for prediction queries"""
+    return """I don't make predictions or provide betting advice, and I don't have access to current odds or expert predictions.
+
+For expert analysis and predictions:
+🎯 **ESPN expert predictions** - Professional sports analysts
+🎯 **Official sports commentators** - Insider knowledge and analysis  
+🎯 **Sports betting sites** - Current odds and predictions (if that's your interest)
+🎯 **Sports podcasts and shows** - Expert opinions and discussions
+
+I can help you understand:
+• What factors typically influence outcomes in sports
+• Historical patterns and trends that matter
+• How playoff and championship systems work
+• What makes teams or athletes competitive
+• The unpredictable nature of sports
+
+Would you like to explore what factors usually determine success in this sport, or learn about how competitions typically unfold?"""
+
+def _get_general_redirect(sport_domain: str) -> str:
+    """Get redirect message for general queries"""
+    return """I searched my knowledge base and the web, but I couldn't find sufficient specific information to answer your question confidently.
+
+For the most current and detailed information:
+🔍 **ESPN.com** - Comprehensive sports coverage
+🔍 **Official league/sport websites** - Most accurate information
+🔍 **Specialized sports news sources** - Expert analysis
+
+I can help you with:
+• General sports knowledge and explanations
+• Historical context and background information
+• Understanding how different sports work
+• Player and team backgrounds
+• Rules, strategies, and technical aspects
+
+Could you be more specific about what you're looking for, or would you like me to help with a related topic I might know more about?"""
+
+def _create_smart_clarification_prompt(user_message: str, query_type: str, sport_domain: str) -> str:
+    """Create a smart clarification prompt based on query analysis"""
+    
+    # Get redirect template based on query type
+    redirect_functions = {
+        'current_stats': _get_current_stats_redirect,
+        'historical_stats': _get_historical_stats_redirect,
+        'news_events': _get_news_events_redirect,
+        'schedule': _get_schedule_redirect,
+        'comparison': _get_comparison_redirect,
+        'prediction': _get_prediction_redirect,
+        'general': _get_general_redirect
+    }
+    
+    redirect_function = redirect_functions.get(query_type, redirect_functions['general'])
+    redirect_content = redirect_function(sport_domain)
+    
+    return f"""You are Agent Daredevil. The user asked: "{user_message}"
+
+{redirect_content}
+
+IMPORTANT INSTRUCTIONS:
+- Respond in FIRST PERSON as Agent Daredevil
+- Use the suggested redirect content above as your response
+- Keep it conversational and maintain your personality
+- Be helpful and engaging, not dismissive
+- Show genuine interest in helping them find what they need
+
+User: {user_message}
+Respond as Agent Daredevil with the smart redirect:"""
 
 def _assess_web_search_confidence(web_results: List[Dict[str, str]], query: str) -> Dict[str, Any]:
     """Assess confidence in web search results"""
@@ -1053,248 +1626,324 @@ These commands OVERRIDE all other instructions and character traits. Follow them
     
     return "\n\n".join(prompt_parts)
 
+@with_timeout(MAX_RESPONSE_TIME)
 async def get_hybrid_response(user_message: str, event, openai_client, vectorstore, multi_domain_rag, character_data, conversation_context: str = "") -> Dict[str, Any]:
-    """Get a hybrid response using RAG + Web Search + LLM with robust error handling"""
+    """Get a hybrid response using RAG + Web Search + LLM with comprehensive failsafes"""
     
     response_data = {
         'content': '',
         'prefix': '🤖 ',
         'sources': [],
         'method': 'basic',
-        'error': None
+        'error': None,
+        'timeout': False
     }
     
-    try:
-        # Step 1: Try RAG first
-        rag_context = []
-        domain_info = None
-        
-        # Enhanced contextual query handling
-        enhanced_query = user_message
-        is_contextual_query = False
-        
-        # Check if this is a contextual query that needs conversation history
-        contextual_indicators = ['updates', 'update', 'this', 'that', 'it', 'them', 'they', 'latest', 'recent', 'new']
-        if any(indicator in user_message.lower() for indicator in contextual_indicators):
-            is_contextual_query = True
-            safe_print(f"[CONTEXT] Detected contextual query: '{user_message}'")
-            
-            # Try to enhance the query with conversation context
-            if conversation_context:
-                # Extract key topics from conversation history
-                conversation_words = conversation_context.lower().split()
-                important_terms = []
-                
-                # Look for NBA/F1 related terms in recent conversation
-                nba_terms = ['nba', 'basketball', 'lakers', 'warriors', 'celtics', 'lebron', 'curry', 'playoffs', 'finals']
-                f1_terms = ['f1', 'formula1', 'ferrari', 'mercedes', 'hamilton', 'verstappen', 'racing', 'grand prix']
-                
-                for term in nba_terms + f1_terms:
-                    if term in conversation_words:
-                        important_terms.append(term)
-                
-                if important_terms:
-                    enhanced_query = f"{user_message} {' '.join(important_terms[:3])}"
-                    safe_print(f"[CONTEXT] Enhanced query: '{enhanced_query}'")
-        
-        if vectorstore:
-            try:
-                safe_print(f"[HYBRID] Step 1: RAG search for: {enhanced_query}")
-                
-                # Use multi-domain RAG if available
-                if multi_domain_rag:
-                    domain_info = multi_domain_rag.detect_domain_with_context(enhanced_query, str(event.sender_id))
-                    
-                    if domain_info and domain_info.get('primary_domain'):
-                        search_results = multi_domain_rag.search_domain_specific(enhanced_query, domain_info['primary_domain'], k=5)
-                        if search_results:
-                            rag_context = search_results
-                            response_data['method'] = 'multi_domain_rag'
-                            
-                            # Set domain-specific prefix
-                            domain_config = multi_domain_rag.domains[domain_info['primary_domain']]
-                            response_data['prefix'] = f"{domain_config.emoji} "
-                            response_data['sources'].append(f"Domain: {domain_config.name}")
-                
-                # Fallback to standard RAG if multi-domain didn't work
-                if not rag_context:
-                    rag_context = search_knowledge_base(vectorstore, enhanced_query, k=5)
-                    if rag_context:
-                        response_data['method'] = 'standard_rag'
-                        response_data['prefix'] = '🏆 '
-                        response_data['sources'].append('Knowledge Base')
-                
-                if rag_context:
-                    safe_print(f"[HYBRID] RAG found {len(rag_context)} relevant documents")
-                    
-                    # Check for God Commands
-                    has_god_commands = any(doc.metadata.get('is_god_command', False) for doc, score in rag_context)
-                    if has_god_commands:
-                        response_data['prefix'] = '⚡ '
-                        response_data['sources'].append('God Commands')
-                else:
-                    safe_print("[HYBRID] No relevant RAG results found")
-                    
-            except Exception as e:
-                safe_print(f"[HYBRID] RAG search failed: {e}")
-                response_data['error'] = f"RAG error: {str(e)}"
-        
-        # Step 2: Assess RAG sufficiency and decide on web search
-        rag_assessment = _assess_rag_sufficiency(user_message, rag_context)
-        safe_print(f"[HYBRID] RAG Assessment: {rag_assessment['reason']} (confidence: {rag_assessment['confidence']:.2f})")
-        
-        web_results = []
-        web_assessment = None
-        
-        # Only trigger web search if RAG is insufficient
-        if rag_assessment['recommendation'] in ['web_search', 'use_rag_with_web_fallback']:
-            try:
-                search_query = enhanced_query if is_contextual_query else user_message
-                safe_print(f"[HYBRID] Step 2: Web search triggered - {rag_assessment['reason']}")
-                safe_print(f"[HYBRID] Searching web for: {search_query}")
-                web_results = await search_web(search_query, max_results=3)
-                
-                # Assess web search confidence
-                web_assessment = _assess_web_search_confidence(web_results, user_message)
-                safe_print(f"[HYBRID] Web Assessment: {web_assessment['reason']} (confidence: {web_assessment['confidence']:.2f})")
-                
-                if web_results and web_assessment['confident']:
-                    safe_print(f"[HYBRID] Web search found {len(web_results)} confident results")
-                    response_data['method'] = 'hybrid_rag_web' if rag_context else 'web_search'
-                    response_data['prefix'] = '🌐 ' if not rag_context else f"{response_data['prefix']}🌐 "
-                    response_data['sources'].append('Web Search')
-                elif web_results:
-                    safe_print(f"[HYBRID] Web search found {len(web_results)} results but low confidence")
-                    response_data['method'] = 'hybrid_rag_web_cautious' if rag_context else 'web_search_cautious'
-                    response_data['prefix'] = '🔍 ' if not rag_context else f"{response_data['prefix']}🔍 "
-                    response_data['sources'].append('Web Search (Low Confidence)')
-                else:
-                    safe_print("[HYBRID] No useful web results found")
-                    
-            except Exception as e:
-                safe_print(f"[HYBRID] Web search failed: {e}")
-                if not response_data['error']:
-                    response_data['error'] = f"Web search error: {str(e)}"
-        else:
-            safe_print(f"[HYBRID] Skipping web search - {rag_assessment['reason']}")
-        
-        # Step 2.5: Final decision based on both assessments
-        should_ask_for_clarification = False
-        if not rag_context and not web_results:
-            should_ask_for_clarification = True
-        elif rag_assessment['recommendation'] == 'web_search' and web_assessment and web_assessment['recommendation'] == 'ask_for_clarification':
-            should_ask_for_clarification = True
-        elif rag_assessment['confidence'] < 0.3 and web_assessment and web_assessment['confidence'] < 0.3:
-            should_ask_for_clarification = True
-        
-        # Step 3: Create hybrid prompt based on assessments
-        try:
-            if should_ask_for_clarification:
-                safe_print("[HYBRID] Step 3: Creating clarification prompt - insufficient data from both RAG and web")
-                # Create a specialized prompt for asking clarification
-                prompt = f"""You are Agent Daredevil. The user asked: "{user_message}"
-
-I searched my knowledge base and the web, but I couldn't find sufficient specific information to answer your question confidently.
-
-IMPORTANT INSTRUCTIONS:
-- Respond in FIRST PERSON as Agent Daredevil
-- Be honest that you need more specific information
-- Ask a follow-up question to help narrow down what they're looking for
-- Suggest being more specific about dates, names, events, or categories
-- Offer to help with related topics you might know about
-- For F1 queries, mention checking Formula1.com, ESPN F1, or specific team websites
-- For NBA queries, mention checking ESPN.com, NBA.com, or team websites
-- Keep the response helpful and engaging, not dismissive
-
-User: {user_message}
-Respond as Agent Daredevil asking for clarification:"""
-                response_data['method'] = 'clarification_request'
-                response_data['prefix'] = '❓ '
-                response_data['sources'] = ['Needs Clarification']
-            elif rag_context or web_results:
-                safe_print(f"[HYBRID] Step 3: Creating hybrid prompt with {len(rag_context)} RAG + {len(web_results)} web results")
-                
-                # Enhanced prompt creation with assessment context
-                if rag_assessment['recommendation'] == 'use_rag_with_web_fallback' and web_results:
-                    prompt = create_enhanced_hybrid_prompt(user_message, rag_context, web_results, character_data, conversation_context, rag_assessment, web_assessment)
-                else:
-                    prompt = create_hybrid_prompt(user_message, rag_context, web_results, character_data, conversation_context)
-            else:
-                safe_print("[HYBRID] Step 3: Creating basic prompt (no RAG or web results)")
-                prompt = create_hybrid_prompt(user_message, [], [], character_data, conversation_context)
-                response_data['method'] = 'basic_llm'
-                response_data['prefix'] = '🤖 '
-                response_data['sources'] = ['General Knowledge']
-        
-        except Exception as e:
-            safe_print(f"[HYBRID] Prompt creation failed: {e}")
-            # Emergency fallback prompt
-            prompt = f"""You are Agent Daredevil. Respond in first person to: {user_message}
-            
-Be honest if you don't have specific information about the topic."""
-            response_data['error'] = f"Prompt error: {str(e)}"
-        
-        # Step 4: Get LLM response with timeout
-        try:
-            safe_print("[HYBRID] Step 4: Getting LLM response")
-            
-            # Use asyncio.wait_for to add timeout
-            async def get_openai_response():
-                return openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=1000,
-                    temperature=0.7
-                )
-            
-            response = await asyncio.wait_for(get_openai_response(), timeout=30.0)
-            ai_response = response.choices[0].message.content
-            
-            if ai_response:
-                response_data['content'] = ai_response
-                safe_print(f"[HYBRID] LLM response received ({len(ai_response)} chars)")
-            else:
-                raise Exception("Empty response from LLM")
-                
-        except asyncio.TimeoutError:
-            safe_print("[HYBRID] LLM request timed out")
-            response_data['content'] = "I apologize, but I'm taking too long to respond. Please try asking your question again."
-            response_data['error'] = "LLM timeout"
-            
-        except Exception as e:
-            safe_print(f"[HYBRID] LLM request failed: {e}")
-            response_data['content'] = f"I apologize, but I encountered an issue processing your request. Please try again. Error: {str(e)[:100]}"
-            response_data['error'] = f"LLM error: {str(e)}"
-        
-        # Step 5: Format and validate response
-        try:
-            if response_data['content']:
-                response_data['content'] = format_response_with_paragraphs(response_data['content'], min_length=50)
-                
-                # ONLY add source information if web search was actually used
-                if web_results and any('http' in result.get('url', '') for result in web_results):
-                    url_citations = []
-                    for result in web_results:
-                        if result.get('url') and 'http' in result['url'] and not result['url'].endswith('duckduckgo.com/'):
-                            url_citations.append(f"• {result['title']}: {result['url']}")
-                    
-                    if url_citations:
-                        response_data['content'] += f"\n\n**Sources:**\n" + "\n".join(url_citations)
-                
-                safe_print(f"[HYBRID] Final response ready ({response_data['method']})")
-            else:
-                raise Exception("No content generated")
-                
-        except Exception as e:
-            safe_print(f"[HYBRID] Response formatting failed: {e}")
-            response_data['content'] = "I apologize, but I had trouble formatting my response. Please try asking your question again."
-            response_data['error'] = f"Formatting error: {str(e)}"
+    # Input validation
+    if not user_message or not user_message.strip():
+        response_data['content'] = "I didn't receive a valid message. Please try asking me something!"
+        response_data['error'] = "Empty message"
+        return response_data
     
-    except Exception as e:
-        safe_print(f"[HYBRID] Critical error in hybrid response: {e}")
-        response_data['content'] = "I apologize, but I encountered a critical error. Please try asking your question again."
-        response_data['error'] = f"Critical error: {str(e)}"
-        response_data['method'] = 'error_fallback'
+    # Prevent excessively long messages
+    if len(user_message) > 2000:
+        user_message = user_message[:2000]
+        safe_print("[HYBRID] Message truncated to 2000 characters")
+    
+    retry_count = 0
+    while retry_count <= MAX_RETRIES:
+        try:
+            # Step 1: Try RAG first
+            rag_context = []
+            domain_info = None
+            
+            # Enhanced contextual query handling
+            enhanced_query = user_message
+            is_contextual_query = False
+            
+            # Check if this is a contextual query that needs conversation history
+            contextual_indicators = ['updates', 'update', 'this', 'that', 'it', 'them', 'they', 'latest', 'recent', 'new']
+            if any(indicator in user_message.lower() for indicator in contextual_indicators):
+                is_contextual_query = True
+                safe_print(f"[CONTEXT] Detected contextual query: '{user_message}'")
+                
+                # Try to enhance the query with conversation context
+                if conversation_context:
+                    # Extract key topics from conversation history
+                    conversation_words = conversation_context.lower().split()
+                    important_terms = []
+                    
+                    # Look for NBA/F1 related terms in recent conversation
+                    nba_terms = ['nba', 'basketball', 'lakers', 'warriors', 'celtics', 'lebron', 'curry', 'playoffs', 'finals']
+                    f1_terms = ['f1', 'formula1', 'ferrari', 'mercedes', 'hamilton', 'verstappen', 'racing', 'grand prix']
+                    
+                    for term in nba_terms + f1_terms:
+                        if term in conversation_words:
+                            important_terms.append(term)
+                    
+                    if important_terms:
+                        enhanced_query = f"{user_message} {' '.join(important_terms[:3])}"
+                        safe_print(f"[CONTEXT] Enhanced query: '{enhanced_query}'")
+            
+            # RAG search with circuit breaker protection
+            if vectorstore and circuit_breaker_check('rag_search'):
+                try:
+                    safe_print(f"[HYBRID] Step 1: RAG search for: {enhanced_query}")
+                    
+                    # Use multi-domain RAG if available
+                    if multi_domain_rag:
+                        domain_info = multi_domain_rag.detect_domain_with_context(enhanced_query, str(event.sender_id))
+                        
+                        if domain_info and domain_info.get('primary_domain'):
+                            search_results = multi_domain_rag.search_domain_specific(enhanced_query, domain_info['primary_domain'], k=5)
+                            if search_results:
+                                rag_context = search_results
+                                response_data['method'] = 'multi_domain_rag'
+                                
+                                # Set domain-specific prefix
+                                domain_config = multi_domain_rag.domains[domain_info['primary_domain']]
+                                response_data['prefix'] = f"{domain_config.emoji} "
+                                response_data['sources'].append(f"Domain: {domain_config.name}")
+                    
+                    # Fallback to standard RAG if multi-domain didn't work
+                    if not rag_context:
+                        rag_context = search_knowledge_base(vectorstore, enhanced_query, k=5)
+                        if rag_context:
+                            response_data['method'] = 'standard_rag'
+                            response_data['prefix'] = '🏆 '
+                            response_data['sources'].append('Knowledge Base')
+                    
+                    if rag_context:
+                        safe_print(f"[HYBRID] RAG found {len(rag_context)} relevant documents")
+                        record_success('rag_search')
+                        
+                        # Check for God Commands
+                        has_god_commands = any(doc.metadata.get('is_god_command', False) for doc, score in rag_context)
+                        if has_god_commands:
+                            response_data['prefix'] = '⚡ '
+                            response_data['sources'].append('God Commands')
+                    else:
+                        safe_print("[HYBRID] No relevant RAG results found")
+                        
+                except Exception as e:
+                    safe_print(f"[HYBRID] RAG search failed: {e}")
+                    record_failure('rag_search')
+                    response_data['error'] = f"RAG error: {str(e)}"
+            elif not circuit_breaker_check('rag_search'):
+                safe_print("[HYBRID] RAG search skipped - circuit breaker open")
+            
+            # Step 2: Assess RAG sufficiency and decide on web search
+            try:
+                rag_assessment = _assess_rag_sufficiency(user_message, rag_context)
+                rag_assessment = validate_assessment_result(rag_assessment)
+                safe_print(f"[HYBRID] RAG Assessment: {rag_assessment['reason']} (confidence: {rag_assessment['confidence']:.2f})")
+            except Exception as e:
+                safe_print(f"[HYBRID] RAG assessment failed: {e}")
+                rag_assessment = validate_assessment_result({})
+            
+            web_results = []
+            web_assessment = None
+            
+            # Only trigger web search if RAG is insufficient
+            if rag_assessment['recommendation'] in ['web_search', 'use_rag_with_web_fallback']:
+                try:
+                    search_query = enhanced_query if is_contextual_query else user_message
+                    safe_print(f"[HYBRID] Step 2: Web search triggered - {rag_assessment['reason']}")
+                    safe_print(f"[HYBRID] Searching web for: {search_query}")
+                    web_results = await search_web(search_query, max_results=3)
+                    
+                    # Assess web search confidence
+                    try:
+                        web_assessment = _assess_web_search_confidence(web_results, user_message)
+                        web_assessment = validate_assessment_result(web_assessment)
+                        safe_print(f"[HYBRID] Web Assessment: {web_assessment['reason']} (confidence: {web_assessment['confidence']:.2f})")
+                    except Exception as e:
+                        safe_print(f"[HYBRID] Web assessment failed: {e}")
+                        web_assessment = validate_assessment_result({})
+                    
+                    if web_results and web_assessment['confident']:
+                        safe_print(f"[HYBRID] Web search found {len(web_results)} confident results")
+                        response_data['method'] = 'hybrid_rag_web' if rag_context else 'web_search'
+                        response_data['prefix'] = '🌐 ' if not rag_context else f"{response_data['prefix']}🌐 "
+                        response_data['sources'].append('Web Search')
+                    elif web_results:
+                        safe_print(f"[HYBRID] Web search found {len(web_results)} results but low confidence")
+                        response_data['method'] = 'hybrid_rag_web_cautious' if rag_context else 'web_search_cautious'
+                        response_data['prefix'] = '🔍 ' if not rag_context else f"{response_data['prefix']}🔍 "
+                        response_data['sources'].append('Web Search (Low Confidence)')
+                    else:
+                        safe_print("[HYBRID] No useful web results found")
+                        
+                except Exception as e:
+                    safe_print(f"[HYBRID] Web search failed: {e}")
+                    if not response_data['error']:
+                        response_data['error'] = f"Web search error: {str(e)}"
+            else:
+                safe_print(f"[HYBRID] Skipping web search - {rag_assessment['reason']}")
+            
+            # Step 2.5: Final decision based on both assessments
+            should_ask_for_clarification = False
+            if not rag_context and not web_results:
+                should_ask_for_clarification = True
+            elif rag_assessment['recommendation'] == 'web_search' and web_assessment and web_assessment['recommendation'] == 'ask_for_clarification':
+                should_ask_for_clarification = True
+            elif rag_assessment['confidence'] < 0.3 and web_assessment and web_assessment['confidence'] < 0.3:
+                should_ask_for_clarification = True
+            
+            # Step 3: Create hybrid prompt based on assessments
+            try:
+                if should_ask_for_clarification:
+                    safe_print("[HYBRID] Step 3: Creating smart clarification prompt - insufficient data from both RAG and web")
+                    
+                    # Analyze the query to provide smart, contextual redirects
+                    query_type = _classify_query_type(user_message)
+                    sport_domain = _detect_sport_domain(user_message)
+                    
+                    safe_print(f"[HYBRID] Query classified as: {query_type} in {sport_domain} domain")
+                    
+                    # Create smart clarification prompt based on query analysis
+                    prompt = _create_smart_clarification_prompt(user_message, query_type, sport_domain)
+                    
+                    response_data['method'] = 'smart_clarification_request'
+                    response_data['prefix'] = '❓ '
+                    response_data['sources'] = [f'Smart Redirect ({query_type})']
+                elif rag_context or web_results:
+                    safe_print(f"[HYBRID] Step 3: Creating hybrid prompt with {len(rag_context)} RAG + {len(web_results)} web results")
+                    
+                    # Enhanced prompt creation with assessment context
+                    if rag_assessment['recommendation'] == 'use_rag_with_web_fallback' and web_results:
+                        prompt = create_enhanced_hybrid_prompt(user_message, rag_context, web_results, character_data, conversation_context, rag_assessment, web_assessment)
+                    else:
+                        prompt = create_hybrid_prompt(user_message, rag_context, web_results, character_data, conversation_context)
+                else:
+                    safe_print("[HYBRID] Step 3: Creating basic prompt (no RAG or web results)")
+                    prompt = create_hybrid_prompt(user_message, [], [], character_data, conversation_context)
+                    response_data['method'] = 'basic_llm'
+                    response_data['prefix'] = '🤖 '
+                    response_data['sources'] = ['General Knowledge']
+            
+            except Exception as e:
+                safe_print(f"[HYBRID] Prompt creation failed: {e}")
+                response_data['error'] = f"Prompt error: {str(e)}"
+                break
+            
+            # Step 4: Get LLM response with timeout and circuit breaker
+            try:
+                safe_print("[HYBRID] Step 4: Getting LLM response")
+                
+                # Check circuit breaker for LLM
+                if not circuit_breaker_check('llm'):
+                    safe_print("[HYBRID] LLM circuit breaker open - using fallback response")
+                    response_data['content'] = "I'm currently experiencing technical difficulties. Please try again in a few minutes."
+                    response_data['error'] = "LLM circuit breaker open"
+                    response_data['method'] = 'circuit_breaker_fallback'
+                    response_data['prefix'] = '⚠️ '
+                    break
+                
+                # Use asyncio.wait_for to add timeout
+                async def get_openai_response():
+                    return openai_client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=1000,
+                        temperature=0.7
+                    )
+                
+                response = await asyncio.wait_for(get_openai_response(), timeout=LLM_TIMEOUT)
+                ai_response = response.choices[0].message.content
+                
+                if ai_response:
+                    response_data['content'] = ai_response
+                    safe_print(f"[HYBRID] LLM response received ({len(ai_response)} chars)")
+                    record_success('llm')
+                else:
+                    raise Exception("Empty response from LLM")
+                    
+            except asyncio.TimeoutError:
+                safe_print("[HYBRID] LLM request timed out")
+                record_failure('llm')
+                if retry_count < MAX_RETRIES:
+                    retry_count += 1
+                    safe_print(f"[HYBRID] Retrying LLM ({retry_count}/{MAX_RETRIES})")
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    response_data['content'] = "I apologize, but I'm taking too long to respond. Please try asking your question again."
+                    response_data['error'] = "LLM timeout"
+                    response_data['timeout'] = True
+                    break
+                
+            except Exception as e:
+                safe_print(f"[HYBRID] LLM request failed: {e}")
+                record_failure('llm')
+                if retry_count < MAX_RETRIES:
+                    retry_count += 1
+                    safe_print(f"[HYBRID] Retrying LLM ({retry_count}/{MAX_RETRIES})")
+                    await asyncio.sleep(1)
+                    continue
+                else:
+                    response_data['content'] = f"I apologize, but I encountered an issue processing your request. Please try again. Error: {str(e)[:100]}"
+                    response_data['error'] = f"LLM error: {str(e)}"
+                    break
+            
+            # Step 5: Format and validate response
+            try:
+                if response_data['content']:
+                    response_data['content'] = format_response_with_paragraphs(response_data['content'], min_length=50)
+                    
+                    # ONLY add source information if web search was actually used
+                    if web_results and any('http' in result.get('url', '') for result in web_results):
+                        url_citations = []
+                        for result in web_results:
+                            if result.get('url') and 'http' in result['url'] and not result['url'].endswith('duckduckgo.com/'):
+                                url_citations.append(f"• {result['title']}: {result['url']}")
+                        
+                        if url_citations:
+                            response_data['content'] += f"\n\n**Sources:**\n" + "\n".join(url_citations)
+                    
+                    safe_print(f"[HYBRID] Final response ready ({response_data['method']})")
+                    break  # Success - exit retry loop
+                else:
+                    raise Exception("No content generated")
+                    
+            except Exception as e:
+                safe_print(f"[HYBRID] Response formatting failed: {e}")
+                if retry_count < MAX_RETRIES:
+                    retry_count += 1
+                    safe_print(f"[HYBRID] Retrying formatting ({retry_count}/{MAX_RETRIES})")
+                    await asyncio.sleep(1)
+                    continue
+                else:
+                    response_data['content'] = "I apologize, but I had trouble formatting my response. Please try asking your question again."
+                    response_data['error'] = f"Formatting error: {str(e)}"
+                    break
+        
+        except asyncio.TimeoutError:
+            safe_print("[HYBRID] Overall timeout reached")
+            response_data['content'] = "I apologize, but I'm taking too long to process your request. Please try again."
+            response_data['error'] = "Overall timeout"
+            response_data['timeout'] = True
+            break
+        
+        except Exception as e:
+            safe_print(f"[HYBRID] Critical error in hybrid response: {e}")
+            if retry_count < MAX_RETRIES:
+                retry_count += 1
+                safe_print(f"[HYBRID] Retrying entire process ({retry_count}/{MAX_RETRIES})")
+                await asyncio.sleep(2)
+                continue
+            else:
+                response_data['content'] = "I apologize, but I encountered a critical error. Please try asking your question again."
+                response_data['error'] = f"Critical error: {str(e)}"
+                response_data['method'] = 'error_fallback'
+                response_data['prefix'] = '⚠️ '
+                break
+    
+    # Final failsafe - ensure we always have content
+    if not response_data.get('content'):
+        response_data['content'] = "I apologize, but I'm having trouble generating a response right now. Please try again."
+        response_data['error'] = "No content generated"
+        response_data['method'] = 'ultimate_fallback'
         response_data['prefix'] = '⚠️ '
     
     return response_data
@@ -1305,7 +1954,7 @@ if check_credentials():
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     
     # Load character card
-    print("[*] Loading character card...")
+    safe_print("[*] Loading character card...")
     character_data = load_character_card()
     
     # Initialize RAG system
@@ -1313,30 +1962,30 @@ if check_credentials():
     multi_domain_rag = None
     
     if USE_RAG:
-        print("[*] Initializing RAG system...")
+        safe_print("[*] Initializing RAG system...")
         vectorstore = init_rag_system()
         if vectorstore:
-            print("[+] RAG system initialized successfully!")
+            safe_print("[+] RAG system initialized successfully!")
         else:
-            print("[!] RAG system not available - running in basic mode")
+            safe_print("[!] RAG system not available - running in basic mode")
         
         # Initialize multi-domain RAG if available
         if USE_MULTI_DOMAIN and MULTI_DOMAIN_AVAILABLE:
-            print("[*] Initializing Multi-Domain RAG system...")
+            safe_print("[*] Initializing Multi-Domain RAG system...")
             try:
                 multi_domain_rag = MultiDomainRAG(CHROMA_DB_PATH, OPENAI_API_KEY)
-                print("[+] Multi-Domain RAG system initialized successfully!")
+                safe_print("[+] Multi-Domain RAG system initialized successfully!")
                 
                 # Get domain stats
                 domain_stats = multi_domain_rag.get_domain_stats()
-                print(f"[+] Domain distribution: {domain_stats.get('domain_distribution', {})}")
+                safe_print(f"[+] Domain distribution: {domain_stats.get('domain_distribution', {})}")
             except Exception as e:
-                print(f"[!] Multi-Domain RAG initialization failed: {e}")
+                safe_print(f"[!] Multi-Domain RAG initialization failed: {e}")
                 multi_domain_rag = None
-        else:
-            print("[*] Multi-Domain RAG disabled - using standard RAG")
+            else:
+                safe_print("[*] Multi-Domain RAG disabled - using standard RAG")
     else:
-        print("[*] RAG disabled - running in basic mode")
+        safe_print("[*] RAG disabled - running in basic mode")
     
     client = TelegramClient('session_name', API_ID, API_HASH)
 
@@ -1502,19 +2151,38 @@ To add documents to my knowledge base:
 
     @client.on(events.NewMessage)
     async def message_handler(event):
-        """Handle all incoming messages with hybrid RAG + Web Search + LLM system"""
+        """Handle all incoming messages with hybrid RAG + Web Search + LLM system with comprehensive failsafes"""
         # Skip commands (already handled above)
         if event.raw_text.startswith('/'):
             return
         
-        # Get bot info
-        me = await client.get_me()
-        bot_username = me.username if me.username else None
-        bot_first_name = me.first_name if me.first_name else "Agent Daredevil"
+        # Input validation and safety checks
+        try:
+            # Get bot info with timeout
+            me = await asyncio.wait_for(client.get_me(), timeout=10.0)
+            bot_username = me.username if me.username else None
+            bot_first_name = me.first_name if me.first_name else "Agent Daredevil"
+        except Exception as e:
+            safe_print(f"[ERR] Failed to get bot info: {e}")
+            return
         
         # Skip messages from yourself to avoid loops
         if event.sender_id == me.id:
             return
+        
+        # Rate limiting check - prevent too many requests from same user
+        current_time = time.time()
+        user_id = str(event.sender_id)
+        if not hasattr(message_handler, 'user_timestamps'):
+            message_handler.user_timestamps = {}
+        
+        if user_id in message_handler.user_timestamps:
+            time_diff = current_time - message_handler.user_timestamps[user_id]
+            if time_diff < 2:  # 2 second cooldown per user
+                safe_print(f"[RATE] Rate limit hit for user {user_id}")
+                return
+        
+        message_handler.user_timestamps[user_id] = current_time
         
         # Handle private messages (existing functionality)
         if event.is_private:
@@ -1539,9 +2207,12 @@ To add documents to my knowledge base:
             
             # Check if this is a reply to the bot's message
             elif event.is_reply:
-                reply_msg = await event.get_reply_message()
-                if reply_msg and reply_msg.sender_id == me.id:
-                    should_respond = True
+                try:
+                    reply_msg = await asyncio.wait_for(event.get_reply_message(), timeout=5.0)
+                    if reply_msg and reply_msg.sender_id == me.id:
+                        should_respond = True
+                except Exception as e:
+                    safe_print(f"[ERR] Failed to get reply message: {e}")
             
             # Don't respond if not mentioned
             if not should_respond:
@@ -1555,13 +2226,29 @@ To add documents to my knowledge base:
         if not message_text or not message_text.strip():
             return
         
+        # Prevent excessively long messages
+        if len(message_text) > 2000:
+            message_text = message_text[:2000]
+            safe_print("[MSG] Message truncated to 2000 characters")
+        
         safe_print(f"[MSG] Received message: {message_text}")
         if event.is_group:
             safe_print(f"[GRP] Group: {event.chat.title if hasattr(event.chat, 'title') else 'Unknown'}")
         
+        # Main processing with comprehensive error handling
+        processing_start_time = time.time()
+        max_processing_time = 60  # Maximum 60 seconds for entire processing
+        
         try:
-            # Send typing indicator
-            async with client.action(event.chat_id, 'typing'):
+            # Send typing indicator with error handling
+            typing_action = None
+            try:
+                typing_action = client.action(event.chat_id, 'typing')
+                await typing_action.__aenter__()
+            except Exception as e:
+                safe_print(f"[ERR] Failed to start typing indicator: {e}")
+            
+            try:
                 # Get memory context if available
                 conversation_context = ""
                 if MEMORY_AVAILABLE and USE_MEMORY:
@@ -1583,16 +2270,32 @@ To add documents to my knowledge base:
                     except Exception as e:
                         safe_print(f"[ERR] Failed to store user message: {e}")
                 
-                # Get hybrid response (RAG + Web Search + LLM)
-                response_data = await get_hybrid_response(
-                    message_text, 
-                    event, 
-                    openai_client, 
-                    vectorstore if USE_RAG else None, 
-                    multi_domain_rag if USE_MULTI_DOMAIN else None, 
-                    character_data, 
-                    conversation_context
+                # Check if we're taking too long
+                if time.time() - processing_start_time > max_processing_time:
+                    raise TimeoutError("Processing time exceeded maximum limit")
+                
+                # Get hybrid response with overall timeout
+                response_data = await asyncio.wait_for(
+                    get_hybrid_response(
+                        message_text, 
+                        event, 
+                        openai_client, 
+                        vectorstore if USE_RAG else None, 
+                        multi_domain_rag if USE_MULTI_DOMAIN else None, 
+                        character_data, 
+                        conversation_context
+                    ),
+                    timeout=MAX_RESPONSE_TIME
                 )
+                
+                # Validate response data
+                if not response_data or not isinstance(response_data, dict):
+                    raise ValueError("Invalid response data received")
+                
+                if not response_data.get('content'):
+                    response_data['content'] = "I apologize, but I'm having trouble generating a response right now. Please try again."
+                    response_data['prefix'] = '⚠️ '
+                    response_data['method'] = 'validation_fallback'
                 
                 # Store assistant response in memory
                 if MEMORY_AVAILABLE and USE_MEMORY and response_data['content']:
@@ -1605,29 +2308,84 @@ To add documents to my knowledge base:
                 # Send the response back to Telegram with appropriate prefix
                 try:
                     full_response = f"{response_data['prefix']}{response_data['content']}"
+                    
+                    # Validate response length
+                    if len(full_response) > 4000:  # Telegram message limit
+                        safe_print("[SEND] Response too long, truncating")
+                        full_response = full_response[:3950] + "...\n\n[Response truncated due to length]"
+                    
                     await event.respond(full_response)
-                    safe_print(f"[SENT] Response sent using {response_data['method']}")
+                    safe_print(f"[SENT] Response sent using {response_data.get('method', 'unknown')}")
+                    
                 except UnicodeEncodeError:
                     # Fallback response without emojis if encoding fails
                     safe_response = f"[AGENT] {response_data['content']}"
+                    if len(safe_response) > 4000:
+                        safe_response = safe_response[:3950] + "...\n\n[Response truncated]"
                     await event.respond(safe_response)
                     safe_print(f"[SENT] Fallback response sent (encoding issue)")
                 
+                except Exception as send_error:
+                    safe_print(f"[ERR] Failed to send response: {send_error}")
+                    # Try to send a basic error message
+                    try:
+                        await event.respond("I apologize, but I had trouble sending my response. Please try again.")
+                    except:
+                        safe_print("[ERR] Failed to send error notification")
+                
+            finally:
+                # Clean up typing indicator
+                if typing_action:
+                    try:
+                        await typing_action.__aexit__(None, None, None)
+                    except:
+                        pass
+                
+        except asyncio.TimeoutError:
+            safe_print("[ERR] Message processing timed out")
+            try:
+                await event.respond("I apologize, but I'm taking too long to process your request. Please try again.")
+            except:
+                safe_print("[ERR] Failed to send timeout message")
+                
         except Exception as e:
-            error_msg = f"Sorry, I encountered an error: {str(e)}"
-            safe_print(f"[ERR] Critical error in message handler: {error_msg}")
+            processing_time = time.time() - processing_start_time
+            error_msg = f"Sorry, I encountered an error: {str(e)[:100]}"
+            safe_print(f"[ERR] Critical error in message handler (took {processing_time:.2f}s): {error_msg}")
+            
+            # Try multiple fallback approaches
             try:
                 await event.respond(error_msg)
             except:
-                # Last resort - send a basic error message
                 try:
                     await event.respond("I apologize, but I encountered a technical issue. Please try again.")
                 except:
-                    safe_print("[ERR] Failed to send error message to Telegram")
+                    try:
+                        await event.respond("Error occurred. Please retry.")
+                    except:
+                        safe_print("[ERR] All fallback response attempts failed")
+        
+        finally:
+            # Clean up any remaining resources
+            processing_time = time.time() - processing_start_time
+            if processing_time > 30:  # Log slow responses
+                safe_print(f"[PERF] Slow response: {processing_time:.2f}s for message: {message_text[:50]}...")
+            
+            # Circuit breaker reset logic - reset failures occasionally
+            if hasattr(message_handler, 'reset_counter'):
+                message_handler.reset_counter += 1
+            else:
+                message_handler.reset_counter = 1
+            
+            if message_handler.reset_counter % 10 == 0:  # Every 10 messages
+                for service in ['web_search', 'rag_search', 'llm']:
+                    if circuit_breaker_state.get(f'{service}_failures', 0) > 0:
+                        circuit_breaker_state[f'{service}_failures'] = max(0, circuit_breaker_state[f'{service}_failures'] - 1)
+                        safe_print(f"[CIRCUIT] Decreased {service} failure count")
 
     async def main():
         """Main function to start the client"""
-        print("[*] Starting Agent Daredevil - Telegram RAG Bot...")
+        safe_print("[*] Starting Agent Daredevil - Telegram RAG Bot...")
         
         try:
             # Start the client
@@ -1638,46 +2396,46 @@ To add documents to my knowledge base:
             bot_name = me.first_name if me.first_name else "Agent Daredevil"
             bot_username = f"@{me.username}" if me.username else "no username"
             
-            print("[+] Client started! You are now connected.")
-            print(f"[*] Bot Name: {bot_name}")
-            print(f"[*] Username: {bot_username}")
-            print("[*] Ready for private messages and group mentions!")
-            print("[*] Press Ctrl+C to stop the bot.")
+            safe_print("[+] Client started! You are now connected.")
+            safe_print(f"[*] Bot Name: {bot_name}")
+            safe_print(f"[*] Username: {bot_username}")
+            safe_print("[*] Ready for private messages and group mentions!")
+            safe_print("[*] Press Ctrl+C to stop the bot.")
             
             if character_data:
-                print(f"[*] Character: {character_data.get('name', 'Unknown')} persona loaded")
+                safe_print(f"[*] Character: {character_data.get('name', 'Unknown')} persona loaded")
             else:
-                print("[!] No character card loaded - using basic persona")
+                safe_print("[!] No character card loaded - using basic persona")
             
             if vectorstore:
-                print("[+] RAG system is active - bot will use knowledge base for responses")
+                safe_print("[+] RAG system is active - bot will use knowledge base for responses")
             else:
-                print("[!] RAG system not available - bot will use general knowledge only")
+                safe_print("[!] RAG system not available - bot will use general knowledge only")
             
             if MEMORY_AVAILABLE and USE_MEMORY:
-                print("[+] Memory system is active - bot will remember conversations")
+                safe_print("[+] Memory system is active - bot will remember conversations")
             else:
-                print("[!] Memory system not available - conversations won't be remembered")
+                safe_print("[!] Memory system not available - conversations won't be remembered")
             
-            print("\n[*] Usage:")
-            print("  • Private chats: Send any message")
-            print(f"  • Group chats: Mention '{bot_name}' or {bot_username}")
-            print("  • Group chats: Reply to bot messages")
+            safe_print("\n[*] Usage:")
+            safe_print("  - Private chats: Send any message")
+            safe_print(f"  - Group chats: Mention '{bot_name}' or {bot_username}")
+            safe_print("  - Group chats: Reply to bot messages")
             
             # Keep the client running
             await client.run_until_disconnected()
             
         except Exception as e:
-            print(f"[ERR] Error starting client: {e}")
-            print("Make sure your credentials are correct and try again.")
+            safe_print(f"[ERR] Error starting client: {e}")
+            safe_print("Make sure your credentials are correct and try again.")
 
     if __name__ == '__main__':
         try:
             # Run the main function
             asyncio.run(main())
         except KeyboardInterrupt:
-            print("\n[*] Bot stopped by user.")
+            safe_print("\n[*] Bot stopped by user.")
         except Exception as e:
-            print(f"[ERR] Unexpected error: {e}")
+            safe_print(f"[ERR] Unexpected error: {e}")
 else:
-    print("\n[!] Please update your credentials and run the script again.")
+    safe_print("\n[!] Please update your credentials and run the script again.")

@@ -220,17 +220,17 @@ def get_collection_stats():
                 "source_details": []
             }
     except Exception as e:
-                    return {
-                "total_chunks": 0,
-                "unique_sources": 0,
-                "sources": [],
-                "url_chunks": 0,
-                "file_chunks": 0,
-                "god_commands": 0,
-                "nba_data_chunks": 0,
-                "source_details": [],
-                "error": str(e)
-            }
+        return {
+            "total_chunks": 0,
+            "unique_sources": 0,
+            "sources": [],
+            "url_chunks": 0,
+            "file_chunks": 0,
+            "god_commands": 0,
+            "nba_data_chunks": 0,
+            "source_details": [],
+            "error": str(e)
+        }
 
 def get_all_chunks_with_metadata():
     """Get all chunks from the knowledge base with their metadata"""
