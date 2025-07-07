@@ -354,14 +354,25 @@ These commands OVERRIDE all other instructions and character traits. Follow them
         instructions = """IMPORTANT: 
 - FIRST PRIORITY: Follow all CRITICAL BEHAVIOR OVERRIDES above exactly
 - SECOND PRIORITY: Respond in FIRST PERSON as Agent Daredevil. You ARE Agent Daredevil.
-- Use the knowledge base context when relevant to answer the user's question.
-- If the context doesn't contain relevant information, use your character knowledge and general knowledge.
+- THIRD PRIORITY: STRICT CONTEXT USAGE RULES:
+  • If the KNOWLEDGE BASE CONTEXT above contains the answer to the user's question, use ONLY that information
+  • If the context is insufficient or missing key details, DO NOT guess or make up information
+  • Instead, ask specific clarifying questions to get the exact information needed
+  • NEVER hallucinate dates, numbers, scores, results, or specific facts not in the context
+  • Be honest about what you don't know: "I don't have that specific information in my knowledge base"
+  • For temporal queries (today, recently, this weekend), ask for specific dates/events
+  • For ambiguous references (the race, that game, he/she), ask for clarification
 - Always maintain your character persona as defined above, unless overridden by critical commands."""
     else:
         instructions = """IMPORTANT:
 - FIRST PRIORITY: Follow all CRITICAL BEHAVIOR OVERRIDES above exactly
-- Respond in FIRST PERSON as Agent Daredevil
-- Use the knowledge base context when relevant"""
+- SECOND PRIORITY: Respond in FIRST PERSON as Agent Daredevil
+- THIRD PRIORITY: STRICT CONTEXT USAGE RULES:
+  • Use ONLY the knowledge base context provided above
+  • If context is insufficient, ask specific clarifying questions instead of guessing
+  • NEVER hallucinate facts not in the context
+  • Be honest about limitations: "I don't have that specific information"
+  • For vague queries, ask for clarification before attempting to answer"""
     
     prompt_parts.append(instructions)
     prompt_parts.append(f"User: {user_message}")
@@ -752,6 +763,234 @@ def _detect_statistical_query(query: str) -> bool:
         if re.search(pattern, query_lower):
             return True
     return False
+
+def _detect_query_ambiguity(query: str) -> Dict[str, Any]:
+    """Detect if a query contains ambiguous temporal or event references that need clarification"""
+    query_lower = query.lower()
+    
+    # Check for specific names/years that make queries non-ambiguous
+    has_specific_name = bool(re.search(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b', query))  # Full names like "Lewis Hamilton"
+    has_specific_year = bool(re.search(r'\b(19|20)\d{2}\b', query))  # Years like 2025
+    has_specific_date = bool(re.search(r'\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\b', query_lower))  # Specific dates
+    has_specific_team = bool(re.search(r'\b(mercedes|ferrari|red\s+bull|mclaren|lakers|warriors|celtics|heat|knicks|bulls)\b', query_lower))  # Specific teams
+    
+    # If query has specific identifiers, it's less likely to be ambiguous
+    specificity_bonus = 0
+    if has_specific_name:
+        specificity_bonus += 0.3
+    if has_specific_year:
+        specificity_bonus += 0.2
+    if has_specific_date:
+        specificity_bonus += 0.2
+    if has_specific_team:
+        specificity_bonus += 0.2
+    
+    # Temporal ambiguity patterns (refined to reduce false positives)
+    temporal_ambiguities = [
+        r'\b(the|that)\s+(race|game|match)\b(?!\s+\d{4})',  # "the race" but not "the race 2025"
+        r'\b(earlier|recent|latest|last|previous)\s+(race|game|match|season|championship|event)\b',
+        r'\b(who|what|when|where|how)\s+(won|finished|placed|scored|performed)\b.*\b(earlier|recently|lately|last|previous)\b',
+        r'\b(the|that|this)\s+(weekend|week|month)\b',  # Removed "year" as it's often specific
+        r'\b(today|yesterday|last\s+week|this\s+week|recently)\b',
+        r'\b(who|what)\s+(won|finished|placed).*\b(earlier|recent|latest|last|previous)\b',
+        r'\b(british|monaco|italian|spanish|french|australian|canadian|german|belgian|dutch|hungarian|singapore|japanese|mexican|brazilian|abu\s+dhabi|miami|las\s+vegas|saudi\s+arabia|qatar|bahrain|chinese|azerbaijani|imola|austrian)\s+(grand\s+prix|gp)\b.*\b(earlier|recent|latest|last|previous)\b',  # Removed years as they're specific
+        r'\b(nba|basketball|finals|playoffs)\b.*\b(earlier|recent|latest|last|previous)\b',  # Removed years as they're specific
+        # CRITICAL: Grand Prix queries without year specification are inherently ambiguous
+        r'\b(who|what)\s+(won|finished|placed)\s+(british|monaco|italian|spanish|french|australian|canadian|german|belgian|dutch|hungarian|singapore|japanese|mexican|brazilian|abu\s+dhabi|miami|las\s+vegas|saudi\s+arabia|qatar|bahrain|chinese|azerbaijani|imola|austrian)\s+(grand\s+prix|gp)\b(?!\s+\d{4})',  # "who won british gp" but not "who won british gp 2025"
+        r'\b(british|monaco|italian|spanish|french|australian|canadian|german|belgian|dutch|hungarian|singapore|japanese|mexican|brazilian|abu\s+dhabi|miami|las\s+vegas|saudi\s+arabia|qatar|bahrain|chinese|azerbaijani|imola|austrian)\s+(grand\s+prix|gp)\s+(winner|results?|champion)\b(?!\s+\d{4})',  # "british gp winner" but not "british gp winner 2025"
+        r'\b(who|what)\s+(won|finished|placed)\s+at\s+(british|monaco|italian|spanish|french|australian|canadian|german|belgian|dutch|hungarian|singapore|japanese|mexican|brazilian|abu\s+dhabi|miami|las\s+vegas|saudi\s+arabia|qatar|bahrain|chinese|azerbaijani|imola|austrian)(?!\s+\d{4})',  # "who won at british" but not "who won at british 2025"
+        r'\b(silverstone|monza|spa|interlagos|suzuka|monaco|hungaroring|red\s+bull\s+ring|circuit\s+of\s+the\s+americas|yas\s+marina|albert\s+park)\s+(winner|results?|champion|pole)\b(?!\s+\d{4})'  # Circuit names without years
+    ]
+    
+    # Context-specific patterns that are only ambiguous without other context
+    contextual_ambiguities = [
+        r'\b(this|current)\s+(season|championship)\b',  # Only ambiguous if no specific player/team mentioned
+        r'\b(the)\s+(championship|final|tournament)\b(?!\s+\d{4})',  # Only if no year
+    ]
+    
+    # Event ambiguity patterns
+    event_ambiguities = [
+        r'\b(the|that|this)\s+(championship|final|playoff|tournament)\b',
+        r'\b(who|what|when|where|how)\s+(is|was|will\s+be)\s+(playing|competing|racing|performing)\b',
+        r'\b(next|upcoming|coming)\s+(race|game|match|event)\b',
+        r'\b(schedule|when|what\s+time)\b.*\b(race|game|match|event)\b',
+        r'\b(pole|starting|qualifying|results|standings|points)\b.*\b(this|that|the)\s+(weekend|event|race|game)\b'
+    ]
+    
+    # Location ambiguity patterns
+    location_ambiguities = [
+        r'\b(there|here|at\s+the\s+track|at\s+the\s+circuit|at\s+the\s+venue)\b',
+        r'\b(local|home|away)\s+(race|game|match|event)\b'
+    ]
+    
+    # Pronoun ambiguity patterns
+    pronoun_ambiguities = [
+        r'\b(he|she|they|him|her|them)\s+(won|finished|placed|scored|performed)\b',
+        r'\b(his|her|their)\s+(performance|result|finish|score|stats)\b',
+        r'\b(he|she|they|him|her|them)\s+(is|was|will\s+be)\s+(playing|competing|racing|performing)\b'
+    ]
+    
+    # Possessive ambiguity patterns
+    possessive_ambiguities = [
+        r'\b(my|your|our|their)\s+(team|driver|favorite|pick)\b',
+        r'\b(the|that|this)\s+(guy|person|player|driver|athlete)\b'
+    ]
+    
+    # Check for ambiguous patterns
+    ambiguity_types = []
+    ambiguous_phrases = []
+    
+    for pattern in temporal_ambiguities:
+        matches = re.finditer(pattern, query_lower)
+        for match in matches:
+            ambiguity_types.append('temporal')
+            ambiguous_phrases.append(match.group())
+    
+    # Check contextual ambiguities only if no specific context is present
+    if not (has_specific_name or has_specific_team):
+        for pattern in contextual_ambiguities:
+            matches = re.finditer(pattern, query_lower)
+            for match in matches:
+                ambiguity_types.append('temporal')
+                ambiguous_phrases.append(match.group())
+    
+    for pattern in event_ambiguities:
+        matches = re.finditer(pattern, query_lower)
+        for match in matches:
+            ambiguity_types.append('event')
+            ambiguous_phrases.append(match.group())
+    
+    for pattern in location_ambiguities:
+        matches = re.finditer(pattern, query_lower)
+        for match in matches:
+            ambiguity_types.append('location')
+            ambiguous_phrases.append(match.group())
+    
+    for pattern in pronoun_ambiguities:
+        matches = re.finditer(pattern, query_lower)
+        for match in matches:
+            ambiguity_types.append('pronoun')
+            ambiguous_phrases.append(match.group())
+    
+    for pattern in possessive_ambiguities:
+        matches = re.finditer(pattern, query_lower)
+        for match in matches:
+            ambiguity_types.append('possessive')
+            ambiguous_phrases.append(match.group())
+    
+    # Calculate initial ambiguity score
+    ambiguity_score = len(set(ambiguous_phrases)) / max(len(query.split()), 1)
+    
+    # Apply specificity bonus to reduce false positives
+    adjusted_score = max(0.0, ambiguity_score - specificity_bonus)
+    
+    # Determine if query is ambiguous (more conservative threshold)
+    is_ambiguous = len(ambiguous_phrases) > 0 and adjusted_score > 0.1
+    
+    return {
+        'is_ambiguous': is_ambiguous,
+        'ambiguity_types': list(set(ambiguity_types)),
+        'ambiguous_phrases': list(set(ambiguous_phrases)),
+        'ambiguity_score': adjusted_score,
+        'confidence': min(0.9, adjusted_score * 2 + 0.1) if is_ambiguous else 0.0,
+        'specificity_bonus': specificity_bonus,
+        'original_score': ambiguity_score
+    }
+
+def _create_clarifying_questions(query: str, ambiguity_data: Dict[str, Any]) -> str:
+    """Create sport-specific clarifying questions based on detected ambiguities"""
+    sport_domain = _detect_sport_domain(query)
+    ambiguity_types = ambiguity_data.get('ambiguity_types', [])
+    ambiguous_phrases = ambiguity_data.get('ambiguous_phrases', [])
+    
+    # Base clarification message
+    clarification_base = "I need more specific information to give you an accurate answer. "
+    
+    # Sport-specific clarifications
+    if sport_domain == 'f1':
+        if 'temporal' in ambiguity_types:
+            clarification_base += "Are you asking about:\n"
+            clarification_base += "🏁 **2025 F1 Season specific race/event?**\n"
+            clarification_base += "   - Which Grand Prix? (e.g., British GP, Monaco GP, etc.)\n"
+            clarification_base += "   - Which session? (Practice, Qualifying, Race, Sprint)\n"
+            clarification_base += "   - Which date/weekend?\n\n"
+            clarification_base += "🏆 **Historical data?**\n"
+            clarification_base += "   - Which specific year or season?\n"
+            clarification_base += "   - Career statistics vs. season-specific?\n\n"
+        
+        if 'event' in ambiguity_types:
+            clarification_base += "🏎️ **Which F1 event specifically?**\n"
+            clarification_base += "   - Current/upcoming race weekend?\n"
+            clarification_base += "   - Specific Grand Prix name?\n"
+            clarification_base += "   - Championship standings?\n"
+            clarification_base += "   - Driver/team performance?\n\n"
+        
+        if 'pronoun' in ambiguity_types or 'possessive' in ambiguity_types:
+            clarification_base += "👤 **Which driver/team are you referring to?**\n"
+            clarification_base += "   - Full driver name (e.g., Lewis Hamilton, Max Verstappen)\n"
+            clarification_base += "   - Team name (e.g., Mercedes, Red Bull Racing)\n\n"
+        
+        clarification_base += "**Examples of specific questions:**\n"
+        clarification_base += "• \"Max Verstappen's pole positions in 2025\"\n"
+        clarification_base += "• \"British Grand Prix 2025 race results\"\n"
+        clarification_base += "• \"Current F1 championship standings\"\n"
+        clarification_base += "• \"Lewis Hamilton's career wins total\""
+    
+    elif sport_domain == 'nba':
+        if 'temporal' in ambiguity_types:
+            clarification_base += "Are you asking about:\n"
+            clarification_base += "🏀 **2024-25 NBA Season specific game/event?**\n"
+            clarification_base += "   - Which team's game?\n"
+            clarification_base += "   - Which date or recent timeframe?\n"
+            clarification_base += "   - Regular season vs. playoffs?\n\n"
+            clarification_base += "📊 **Historical data?**\n"
+            clarification_base += "   - Which specific season or year?\n"
+            clarification_base += "   - Career statistics vs. season-specific?\n\n"
+        
+        if 'event' in ambiguity_types:
+            clarification_base += "🏆 **Which NBA event specifically?**\n"
+            clarification_base += "   - Current/recent game results?\n"
+            clarification_base += "   - Specific team matchup?\n"
+            clarification_base += "   - League standings?\n"
+            clarification_base += "   - Player/team performance?\n\n"
+        
+        if 'pronoun' in ambiguity_types or 'possessive' in ambiguity_types:
+            clarification_base += "👤 **Which player/team are you referring to?**\n"
+            clarification_base += "   - Full player name (e.g., LeBron James, Stephen Curry)\n"
+            clarification_base += "   - Team name (e.g., Lakers, Warriors)\n\n"
+        
+        clarification_base += "**Examples of specific questions:**\n"
+        clarification_base += "• \"LeBron James' points in 2024-25 season\"\n"
+        clarification_base += "• \"Lakers vs Warriors game result January 2025\"\n"
+        clarification_base += "• \"Current NBA standings\"\n"
+        clarification_base += "• \"Stephen Curry's career three-pointers total\""
+    
+    else:  # general sports
+        if 'temporal' in ambiguity_types:
+            clarification_base += "Are you asking about:\n"
+            clarification_base += "⏰ **Current/recent events?**\n"
+            clarification_base += "   - Which sport specifically?\n"
+            clarification_base += "   - Which date or timeframe?\n"
+            clarification_base += "   - Current season vs. historical?\n\n"
+        
+        if 'event' in ambiguity_types:
+            clarification_base += "🏆 **Which event specifically?**\n"
+            clarification_base += "   - Sport type (F1, NBA, NFL, etc.)?\n"
+            clarification_base += "   - Competition/tournament name?\n"
+            clarification_base += "   - Team/player matchup?\n\n"
+        
+        if 'pronoun' in ambiguity_types or 'possessive' in ambiguity_types:
+            clarification_base += "👤 **Which athlete/team are you referring to?**\n"
+            clarification_base += "   - Full name and sport?\n"
+            clarification_base += "   - Team name and league?\n\n"
+        
+        clarification_base += "**Please provide:**\n"
+        clarification_base += "• Specific sport and league\n"
+        clarification_base += "• Full names of athletes/teams\n"
+        clarification_base += "• Specific dates or seasons\n"
+        clarification_base += "• Exact event or competition name"
+    
+    return clarification_base
 
 def _assess_rag_sufficiency(query: str, rag_context: List[Tuple[Any, float]]) -> Dict[str, Any]:
     """Assess if RAG context has sufficient information for the specific query"""
@@ -1587,6 +1826,12 @@ These commands OVERRIDE all other instructions and character traits. Follow them
     instructions = """IMPORTANT INSTRUCTIONS - ENHANCED HYBRID RESPONSE:
 - FIRST PRIORITY: Follow any CRITICAL BEHAVIOR OVERRIDES above exactly
 - SECOND PRIORITY: Respond in FIRST PERSON as Agent Daredevil
+- THIRD PRIORITY: STRICT CONTEXT USAGE RULES:
+  • Use ONLY the information provided in the KNOWLEDGE BASE CONTEXT and WEB SEARCH RESULTS above
+  • NEVER hallucinate or make up dates, scores, names, statistics, or facts not in the provided context
+  • If context is insufficient for a complete answer, be honest about limitations
+  • For ambiguous queries (the race, that game, recently), ask for clarification
+  • Say "I don't have that specific information" rather than guessing
 - I have searched both my knowledge base and the web for your question"""
     
     if rag_assessment and web_assessment:
@@ -1653,6 +1898,27 @@ async def get_hybrid_response(user_message: str, event, openai_client, vectorsto
     retry_count = 0
     while retry_count <= MAX_RETRIES:
         try:
+            # Step 0: Aggressive ambiguity detection before RAG/web search
+            ambiguity_data = _detect_query_ambiguity(user_message)
+            
+            # If query is highly ambiguous, trigger clarification immediately
+            if ambiguity_data['is_ambiguous'] and ambiguity_data['confidence'] > 0.7:
+                safe_print(f"[HYBRID] HIGH AMBIGUITY DETECTED: {ambiguity_data['ambiguous_phrases']} (confidence: {ambiguity_data['confidence']:.2f})")
+                
+                # Create clarifying questions for the ambiguous query
+                clarification_prompt = _create_clarifying_questions(user_message, ambiguity_data)
+                
+                response_data['content'] = clarification_prompt
+                response_data['method'] = 'ambiguity_clarification'
+                response_data['prefix'] = '❓ '
+                response_data['sources'] = [f"Ambiguity Detection ({', '.join(ambiguity_data['ambiguity_types'])})"]
+                
+                return response_data
+            
+            elif ambiguity_data['is_ambiguous'] and ambiguity_data['confidence'] > 0.4:
+                safe_print(f"[HYBRID] MODERATE AMBIGUITY DETECTED: {ambiguity_data['ambiguous_phrases']} (confidence: {ambiguity_data['confidence']:.2f})")
+                safe_print("[HYBRID] Proceeding with RAG/web search but will prioritize clarification if results are insufficient")
+            
             # Step 1: Try RAG first
             rag_context = []
             domain_info = None
@@ -1781,7 +2047,7 @@ async def get_hybrid_response(user_message: str, event, openai_client, vectorsto
             else:
                 safe_print(f"[HYBRID] Skipping web search - {rag_assessment['reason']}")
             
-            # Step 2.5: Final decision based on both assessments
+            # Step 2.5: Final decision based on both assessments and ambiguity
             should_ask_for_clarification = False
             if not rag_context and not web_results:
                 should_ask_for_clarification = True
@@ -1789,24 +2055,48 @@ async def get_hybrid_response(user_message: str, event, openai_client, vectorsto
                 should_ask_for_clarification = True
             elif rag_assessment['confidence'] < 0.3 and web_assessment and web_assessment['confidence'] < 0.3:
                 should_ask_for_clarification = True
+            elif ambiguity_data['is_ambiguous'] and ambiguity_data['confidence'] > 0.4:
+                # If query is ambiguous and we have insufficient results, prioritize clarification
+                max_confidence = max(rag_assessment['confidence'], web_assessment['confidence'] if web_assessment else 0.0)
+                if max_confidence < 0.6:
+                    should_ask_for_clarification = True
+                    safe_print(f"[HYBRID] Ambiguous query with insufficient results - triggering clarification (max confidence: {max_confidence:.2f})")
+            
+            # Additional check for moderate ambiguity with poor results
+            if ambiguity_data['is_ambiguous'] and ambiguity_data['confidence'] > 0.3:
+                combined_confidence = (rag_assessment['confidence'] + (web_assessment['confidence'] if web_assessment else 0.0)) / 2
+                if combined_confidence < 0.4:
+                    should_ask_for_clarification = True
+                    safe_print(f"[HYBRID] Moderate ambiguity with poor combined results - triggering clarification (combined: {combined_confidence:.2f})")
             
             # Step 3: Create hybrid prompt based on assessments
             try:
                 if should_ask_for_clarification:
                     safe_print("[HYBRID] Step 3: Creating smart clarification prompt - insufficient data from both RAG and web")
                     
-                    # Analyze the query to provide smart, contextual redirects
-                    query_type = _classify_query_type(user_message)
-                    sport_domain = _detect_sport_domain(user_message)
-                    
-                    safe_print(f"[HYBRID] Query classified as: {query_type} in {sport_domain} domain")
-                    
-                    # Create smart clarification prompt based on query analysis
-                    prompt = _create_smart_clarification_prompt(user_message, query_type, sport_domain)
-                    
-                    response_data['method'] = 'smart_clarification_request'
-                    response_data['prefix'] = '❓ '
-                    response_data['sources'] = [f'Smart Redirect ({query_type})']
+                    # Prioritize ambiguity-based clarification if query is ambiguous
+                    if ambiguity_data['is_ambiguous'] and ambiguity_data['confidence'] > 0.3:
+                        safe_print(f"[HYBRID] Using ambiguity-based clarification: {ambiguity_data['ambiguity_types']}")
+                        
+                        # Create clarifying questions based on detected ambiguities
+                        prompt = _create_clarifying_questions(user_message, ambiguity_data)
+                        
+                        response_data['method'] = 'ambiguity_clarification_enhanced'
+                        response_data['prefix'] = '❓ '
+                        response_data['sources'] = [f"Ambiguity Detection ({', '.join(ambiguity_data['ambiguity_types'])})"]
+                    else:
+                        # Fallback to smart redirect system for non-ambiguous queries
+                        query_type = _classify_query_type(user_message)
+                        sport_domain = _detect_sport_domain(user_message)
+                        
+                        safe_print(f"[HYBRID] Query classified as: {query_type} in {sport_domain} domain")
+                        
+                        # Create smart clarification prompt based on query analysis
+                        prompt = _create_smart_clarification_prompt(user_message, query_type, sport_domain)
+                        
+                        response_data['method'] = 'smart_clarification_request'
+                        response_data['prefix'] = '❓ '
+                        response_data['sources'] = [f'Smart Redirect ({query_type})']
                 elif rag_context or web_results:
                     safe_print(f"[HYBRID] Step 3: Creating hybrid prompt with {len(rag_context)} RAG + {len(web_results)} web results")
                     
