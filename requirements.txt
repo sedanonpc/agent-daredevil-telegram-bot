@@ -26,13 +26,14 @@ pandas>=2.0.0
 numpy>=1.24.0
 
 # Web Crawler Dependencies
-sqlite3  # Built-in with Python
-concurrent.futures  # Built-in with Python
-threading  # Built-in with Python
-queue  # Built-in with Python
-hashlib  # Built-in with Python
-urllib.robotparser  # Built-in with Python
-urllib.parse  # Built-in with Python
+# Note: The following are built-in with Python and don't need to be installed via pip
+# sqlite3
+# concurrent.futures
+# threading
+# queue
+# hashlib
+# urllib.robotparser
+# urllib.parse
 
 # Optional Performance Packages
 cryptg>=0.4.0
@@ -46,4 +47,7 @@ urllib3>=2.0.0
 pytz>=2023.3
 
 # Environment Variables
-python-dotenv>=1.0.0 
+python-dotenv>=1.0.0
+
+# Voice Processing
+elevenlabs>=0.2.0
