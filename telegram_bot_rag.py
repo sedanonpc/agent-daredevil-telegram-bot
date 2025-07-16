@@ -3,7 +3,7 @@
 Advanced Telegram Bot with RAG and Voice Processing
 =================================================
 This bot integrates:
-- OpenAI GPT for conversations
+- Multi-LLM Support (OpenAI GPT, Google Gemini, Vertex AI)
 - ChromaDB RAG for knowledge retrieval
 - Voice note processing (speech-to-text and text-to-speech)
 - Character personality from JSON file
@@ -37,13 +37,14 @@ if sys.platform.startswith('win'):
 # Core imports
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeAudio
-import openai
-from openai import OpenAI
 
 # RAG and knowledge imports
 import chromadb
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
+
+# LLM provider abstraction
+from llm_provider import get_llm_provider, LLMProvider
 
 # Voice processing
 from voice_processor import voice_processor
@@ -65,6 +66,7 @@ logger = logging.getLogger(__name__)
 class AgentDaredevilBot:
     """
     Advanced Telegram bot with RAG, voice processing, and character consistency.
+    Supports multiple LLM providers: OpenAI, Google Gemini, and Vertex AI.
     """
     
     def __init__(self):
@@ -73,8 +75,13 @@ class AgentDaredevilBot:
         # Load configuration
         self.config = self._load_config()
         
-        # Initialize OpenAI client
-        self.openai_client = OpenAI(api_key=self.config['openai_api_key'])
+        # Initialize LLM provider (OpenAI, Gemini, or Vertex AI)
+        try:
+            self.llm_provider = get_llm_provider()
+            logger.info(f"LLM Provider initialized: {self.llm_provider.get_model_name()}")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM provider: {e}")
+            raise
         
         # Initialize Telegram client
         self.client = TelegramClient(
@@ -109,7 +116,7 @@ class AgentDaredevilBot:
             'telegram_api_id': int(os.getenv('TELEGRAM_API_ID', 0)),
             'telegram_api_hash': os.getenv('TELEGRAM_API_HASH', ''),
             'telegram_phone_number': os.getenv('TELEGRAM_PHONE_NUMBER', ''),
-            'openai_api_key': os.getenv('OPENAI_API_KEY', ''),
+            'llm_provider': os.getenv('LLM_PROVIDER', 'openai').lower(),
             'chroma_db_path': os.getenv('CHROMA_DB_PATH', './chroma_db'),
             'character_card_path': os.getenv('CHARACTER_CARD_PATH', './cryptodevil.character.json'),
             'use_rag': os.getenv('USE_RAG', 'True').lower() == 'true',
@@ -128,8 +135,15 @@ class AgentDaredevilBot:
             missing.append('TELEGRAM_API_HASH')
         if not config['telegram_phone_number']:
             missing.append('TELEGRAM_PHONE_NUMBER')
-        if not config['openai_api_key']:
+        
+        # Check provider-specific requirements
+        provider = config['llm_provider']
+        if provider == 'openai' and not os.getenv('OPENAI_API_KEY'):
             missing.append('OPENAI_API_KEY')
+        elif provider == 'gemini' and not os.getenv('GOOGLE_AI_API_KEY'):
+            missing.append('GOOGLE_AI_API_KEY')
+        elif provider == 'vertex_ai' and not os.getenv('GOOGLE_CLOUD_PROJECT_ID'):
+            missing.append('GOOGLE_CLOUD_PROJECT_ID')
         
         if missing:
             logger.error(f"Missing required environment variables: {', '.join(missing)}")
@@ -144,9 +158,16 @@ class AgentDaredevilBot:
             return
         
         try:
+            # For embeddings, we'll use OpenAI embeddings regardless of the main LLM provider
+            # since Gemini doesn't have a direct embeddings API yet
+            openai_api_key = os.getenv('OPENAI_API_KEY')
+            if not openai_api_key:
+                logger.warning("OpenAI API key not found. RAG system requires OpenAI embeddings. Disabling RAG.")
+                return
+            
             # Initialize embeddings
             self.embeddings = OpenAIEmbeddings(
-                openai_api_key=self.config['openai_api_key']
+                openai_api_key=openai_api_key
             )
             
             # Initialize vectorstore
@@ -177,108 +198,107 @@ class AgentDaredevilBot:
         except Exception as e:
             logger.error(f"Error loading character: {e}")
             return {}
-    
+
     def _create_system_prompt(self, user_id: str) -> str:
-        """Create system prompt with character and context."""
-        base_prompt = "You are Agent Daredevil, a helpful AI assistant."
+        """Create system prompt based on character and current context."""
         
-        # Add character personality if available
-        if self.character:
-            if 'system' in self.character:
-                base_prompt = self.character['system']
-            
-            # Add bio
-            if 'bio' in self.character and self.character['bio']:
-                bio_text = " | ".join(self.character['bio'])
-                base_prompt += f"\n\nBACKGROUND: {bio_text}"
-            
-            # Add personality traits
-            if 'adjectives' in self.character and self.character['adjectives']:
-                traits = ", ".join(self.character['adjectives'])
-                base_prompt += f"\n\nPERSONALITY: {traits}"
+        # Base system prompt from character
+        system_prompt = self.character.get('system', 'You are a helpful AI assistant.')
         
-        # Add current context
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        base_prompt += f"\n\nCURRENT TIME: {current_time}"
-        base_prompt += "\n\nREMEMBER: You are chatting on Telegram. Keep responses conversational and engaging."
+        # Add character bio if available
+        bio = self.character.get('bio', [])
+        if bio:
+            system_prompt += f"\n\nCharacter Bio:\n" + "\n".join(f"- {point}" for point in bio)
         
-        return base_prompt
-    
-    async def search_knowledge_base(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
+        # Add current date/time context
+        current_time = datetime.now()
+        system_prompt += f"\n\nCurrent date and time: {current_time.strftime('%A, %B %d, %Y at %I:%M %p')}"
+        
+        # Add NBA season context (example of domain-specific context)
+        if current_time.month >= 10 or current_time.month <= 4:
+            system_prompt += f"\nNote: Currently in NBA regular season (October-April)"
+        elif current_time.month >= 5 and current_time.month <= 6:
+            system_prompt += f"\nNote: Currently in NBA playoffs season (May-June)"
+        else:
+            system_prompt += f"\nNote: Currently in NBA off-season"
+        
+        # Add response length limitation
+        system_prompt += "\n\nIMPORTANT: Keep your responses concise, using only 3-5 sentences. Only use up to 6 sentences for data-heavy responses, with the last sentence including a data summary."
+        
+        return system_prompt
+
+    def _analyze_question_type(self, message_text: str) -> Dict[str, Any]:
+        """Analyze the question type to determine appropriate response parameters."""
+        message_lower = message_text.lower()
+        
+        # Quick responses for greetings and small talk
+        quick_triggers = ['hi', 'hello', 'hey', 'sup', 'yo', 'what\'s up', 'how are you', 'good morning', 'good night']
+        if any(trigger in message_lower for trigger in quick_triggers) and len(message_text) < 50:
+            return {
+                'type': 'small_talk',
+                'max_tokens': 150,
+                'temperature': 0.9,
+                'length_instruction': 'Keep response brief and friendly (3 sentences max)'
+            }
+        
+        # Analytical questions that might need RAG
+        analytical_triggers = ['explain', 'analyze', 'compare', 'stats', 'data', 'performance', 'history', 'tell me about']
+        if any(trigger in message_lower for trigger in analytical_triggers):
+            return {
+                'type': 'analytical',
+                'max_tokens': 600,
+                'temperature': 0.4,
+                'length_instruction': 'Provide concise analysis in 3-5 sentences; include data summary in the last sentence'
+            }
+        
+        # Default case - general conversation
+        return {
+            'type': 'general',
+            'max_tokens': 400,
+            'temperature': 0.7,
+            'length_instruction': 'Respond in 3-5 concise, informative sentences'
+        }
+
+    async def search_knowledge_base(self, query: str, k: int = 3) -> List[Dict[str, Any]]:
         """Search the knowledge base for relevant information."""
         if not self.vectorstore:
             return []
         
         try:
-            results = self.vectorstore.similarity_search_with_score(query, k=k)
+            # Perform similarity search
+            docs = self.vectorstore.similarity_search(query, k=k)
             
-            knowledge_items = []
-            for doc, score in results:
-                knowledge_items.append({
+            # Format results
+            results = []
+            for doc in docs:
+                results.append({
                     'content': doc.page_content,
-                    'metadata': doc.metadata,
-                    'score': score
+                    'metadata': doc.metadata
                 })
             
-            logger.info(f"Found {len(knowledge_items)} knowledge items for query: {query[:50]}...")
-            return knowledge_items
+            return results
             
         except Exception as e:
             logger.error(f"Error searching knowledge base: {e}")
             return []
-    
-    def _analyze_question_type(self, message_text: str) -> Dict[str, Any]:
-        """Analyze the message to determine appropriate response length and style."""
-        message_lower = message_text.lower()
+
+    def _is_god_command(self, message_text: str) -> tuple[bool, str]:
+        """Check if message is a god command and extract the override instruction."""
+        message_upper = message_text.upper()
         
-        # Data/statistical/analytical keywords
-        analytical_keywords = [
-            'statistics', 'data', 'analysis', 'numbers', 'percentage', 'calculate', 'compare',
-            'research', 'study', 'report', 'findings', 'results', 'metrics', 'performance',
-            'trends', 'breakdown', 'detailed', 'explain how', 'why does', 'what causes',
-            'basketball', 'nba', 'stats', 'season', 'player', 'team', 'game', 'score'
+        # God command triggers
+        god_triggers = [
+            '⚡GOD:', 'GOD:', '!GOD', '/GOD', 'OVERRIDE:', '⚡OVERRIDE:',
+            'NBA_ANALYST:', 'BASKETBALL:', 'F1_EXPERT:', 'CRYPTO_DEVIL:'
         ]
         
-        # Small talk/greeting keywords
-        small_talk_keywords = [
-            'hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening',
-            'how are you', 'whats up', "what's up", 'thanks', 'thank you', 'bye',
-            'goodbye', 'see you', 'nice', 'cool', 'awesome', 'great', 'ok', 'okay'
-        ]
+        for trigger in god_triggers:
+            if message_upper.startswith(trigger):
+                instruction = message_text[len(trigger):].strip()
+                return True, instruction
         
-        # Check for analytical content
-        is_analytical = any(keyword in message_lower for keyword in analytical_keywords)
-        
-        # Check for small talk
-        is_small_talk = any(keyword in message_lower for keyword in small_talk_keywords)
-        
-        # Question indicators
-        is_question = any(message_text.strip().startswith(q) for q in ['?', 'what', 'how', 'why', 'when', 'where', 'who'])
-        is_question = is_question or '?' in message_text
-        
-        # Determine response type
-        if is_analytical or (is_question and not is_small_talk):
-            return {
-                'type': 'analytical',
-                'max_tokens': 400,
-                'temperature': 0.3,
-                'length_instruction': 'Be thorough but concise. Provide specific details and data when available.'
-            }
-        elif is_small_talk:
-            return {
-                'type': 'small_talk',
-                'max_tokens': 100,
-                'temperature': 0.7,
-                'length_instruction': 'Keep it very brief and conversational. 1-2 sentences maximum.'
-            }
-        else:
-            return {
-                'type': 'general',
-                'max_tokens': 200,
-                'temperature': 0.5,
-                'length_instruction': 'Be helpful but concise. Keep responses focused and to the point.'
-            }
-    
+        return False, ""
+
     async def _is_reply_to_bot(self, message) -> bool:
         """
         Check if the message is a reply to the bot's message.
@@ -335,8 +355,32 @@ class AgentDaredevilBot:
         return False
 
     async def generate_response(self, message_text: str, user_id: str) -> str:
-        """Generate response using OpenAI with RAG context and intelligent length control."""
+        """Generate response using the configured LLM provider with RAG context."""
         try:
+            # Check for god commands first
+            is_god_command, god_instruction = self._is_god_command(message_text)
+            
+            if is_god_command:
+                # For god commands, use the instruction directly with minimal context
+                messages = [
+                    {"role": "system", "content": self._create_system_prompt(user_id)},
+                    {"role": "user", "content": god_instruction}
+                ]
+                
+                response = await self.llm_provider.generate_response(
+                    messages=messages,
+                    max_tokens=1000,
+                    temperature=0.7
+                )
+                
+                # Store in session memory
+                if self.config['use_memory']:
+                    self.session_memory.add_message(int(user_id), "user", message_text)
+                    self.session_memory.add_message(int(user_id), "assistant", response)
+                
+                return f"⚡ {response}"
+            
+            # Regular processing
             # Analyze question type for appropriate response length
             question_analysis = self._analyze_question_type(message_text)
             
@@ -365,37 +409,40 @@ class AgentDaredevilBot:
             if knowledge_context:
                 system_prompt += knowledge_context
             
-            # Generate response with appropriate parameters
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message_text}
-                ],
+            # Prepare messages for LLM
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message_text}
+            ]
+            
+            # Generate response using the configured provider
+            response = await self.llm_provider.generate_response(
+                messages=messages,
                 max_tokens=question_analysis['max_tokens'],
                 temperature=question_analysis['temperature']
             )
             
-            ai_response = response.choices[0].message.content.strip()
-            
             # Store in session memory
             if self.config['use_memory']:
                 self.session_memory.add_message(int(user_id), "user", message_text)
-                self.session_memory.add_message(int(user_id), "assistant", ai_response)
+                self.session_memory.add_message(int(user_id), "assistant", response)
             
-            return ai_response
+            return response
             
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             return "I apologize, but I'm experiencing some technical difficulties. Please try again."
-    
+
     async def setup_handlers(self):
         """Setup Telegram event handlers."""
         
         @self.client.on(events.NewMessage(pattern='/start'))
         async def start_handler(event):
             """Handle /start command."""
-            welcome_msg = "🤖 Hello! I'm Agent Daredevil, your advanced AI assistant!\n\n"
+            provider_info = f"Using {self.llm_provider.get_model_name()}"
+            
+            welcome_msg = f"🤖 Hello! I'm Agent Daredevil, your advanced AI assistant!\n\n"
+            welcome_msg += f"🧠 {provider_info}\n"
             welcome_msg += "💬 Send me text messages and I'll respond with knowledge from my database\n"
             
             if self.voice_enabled:

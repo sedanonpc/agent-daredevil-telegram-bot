@@ -1,252 +1,266 @@
 #!/usr/bin/env python3
 """
-Installation and Setup Script for Telegram Bot & RAG Manager
-============================================================
-This script helps users set up the project dependencies and configuration.
+Agent Daredevil Installation Helper
+==================================
+This script helps set up the Agent Daredevil Telegram bot by:
+1. Installing required dependencies
+2. Creating and configuring the .env file
+3. Testing LLM provider connections
+4. Providing next steps
+
+Usage:
+    python install.py
 """
 
-import subprocess
-import sys
 import os
-import json
+import sys
+import subprocess
+import shutil
+import asyncio
 from pathlib import Path
 
+# ANSI colors for terminal output
 class Colors:
-    """ANSI color codes for console output"""
     HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
     ENDC = '\033[0m'
     BOLD = '\033[1m'
 
-def safe_print(message):
-    """Print function that handles Unicode encoding issues on Windows"""
-    try:
-        print(message)
-    except UnicodeEncodeError:
-        # Fallback to ASCII-safe version
-        safe_message = message.encode('ascii', 'replace').decode('ascii')
-        print(safe_message)
+def print_colored(text, color):
+    """Print colored text to terminal."""
+    print(f"{color}{text}{Colors.ENDC}")
 
-def print_banner():
-    """Print installation banner"""
-    banner = f"""
-{Colors.HEADER}{'='*70}
-{Colors.BOLD}🛠️  TELEGRAM BOT & RAG MANAGER INSTALLER  🛠️{Colors.ENDC}
-{Colors.HEADER}{'='*70}{Colors.ENDC}
+def print_header(text):
+    """Print a formatted header."""
+    print("\n")
+    print_colored("=" * 60, Colors.HEADER)
+    print_colored(f" {text}", Colors.HEADER)
+    print_colored("=" * 60, Colors.HEADER)
 
-{Colors.OKCYAN}This installer will:{Colors.ENDC}
-{Colors.OKGREEN}✓{Colors.ENDC} Check Python version compatibility
-{Colors.OKGREEN}✓{Colors.ENDC} Install required Python packages
-{Colors.OKGREEN}✓{Colors.ENDC} Guide you through credential setup
-{Colors.OKGREEN}✓{Colors.ENDC} Verify installation completeness
-
-{Colors.WARNING}📋 Prerequisites:{Colors.ENDC}
-- Python 3.8 or higher
-- Internet connection for package installation
-- Telegram API credentials (we'll help you get these)
-- OpenAI API key (we'll help you get this too)
-
-{Colors.HEADER}{'='*70}{Colors.ENDC}
-"""
-    safe_print(banner)
-
-def check_python_version():
-    """Check if Python version is compatible"""
-    safe_print(f"{Colors.OKCYAN}🐍 Checking Python version...{Colors.ENDC}")
+def run_command(command, explanation=None):
+    """Run a shell command and return success status."""
+    if explanation:
+        print_colored(f"\n{explanation}", Colors.BLUE)
     
-    version = sys.version_info
-    if version.major < 3 or (version.major == 3 and version.minor < 8):
-        safe_print(f"{Colors.FAIL}❌ Python 3.8+ required, found {version.major}.{version.minor}{Colors.ENDC}")
-        safe_print(f"{Colors.WARNING}Please upgrade Python and try again.{Colors.ENDC}")
-        return False
-    
-    safe_print(f"{Colors.OKGREEN}✅ Python {version.major}.{version.minor}.{version.micro} is compatible{Colors.ENDC}")
-    return True
-
-def install_packages():
-    """Install required packages"""
-    safe_print(f"\n{Colors.OKCYAN}📦 Installing required packages...{Colors.ENDC}")
+    print_colored(f"$ {command}", Colors.CYAN)
     
     try:
-        # Check if requirements.txt exists
-        if not Path("requirements.txt").exists():
-            safe_print(f"{Colors.FAIL}❌ requirements.txt not found{Colors.ENDC}")
-            return False
-        
-        # Install packages
-        safe_print(f"{Colors.WARNING}This may take a few minutes...{Colors.ENDC}")
-        result = subprocess.run([
-            sys.executable, "-m", "pip", "install", "-r", "requirements.txt"
-        ], capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            safe_print(f"{Colors.OKGREEN}✅ All packages installed successfully{Colors.ENDC}")
-            return True
-        else:
-            safe_print(f"{Colors.FAIL}❌ Package installation failed:{Colors.ENDC}")
-            safe_print(result.stderr)
-            return False
-            
-    except Exception as e:
-        safe_print(f"{Colors.FAIL}❌ Installation error: {e}{Colors.ENDC}")
+        result = subprocess.run(command, shell=True, check=True, text=True, 
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print_colored(result.stdout, Colors.ENDC)
+        return True
+    except subprocess.CalledProcessError as e:
+        print_colored(f"Error: {e}", Colors.RED)
+        print_colored(e.stderr, Colors.RED)
         return False
 
-def guide_credential_setup():
-    """Guide user through credential setup"""
-    safe_print(f"\n{Colors.OKCYAN}🔑 Credential Setup Guide{Colors.ENDC}")
-    safe_print(f"{Colors.HEADER}{'='*40}{Colors.ENDC}")
+def install_dependencies():
+    """Install required Python dependencies."""
+    print_header("Installing Dependencies")
     
-    # Telegram API Setup
-    safe_print(f"\n{Colors.OKBLUE}📱 Telegram API Setup:{Colors.ENDC}")
-    safe_print("1. Go to: https://my.telegram.org/apps")
-    safe_print("2. Log in with your Telegram account")
-    safe_print("3. Create a new application")
-    safe_print("4. Note down your API_ID and API_HASH")
-    
-    # OpenAI API Setup
-    safe_print(f"\n{Colors.OKBLUE}🤖 OpenAI API Setup:{Colors.ENDC}")
-    safe_print("1. Go to: https://platform.openai.com/api-keys")
-    safe_print("2. Create an account or log in")
-    safe_print("3. Create a new API key")
-    safe_print("4. Note down your API key (starts with 'sk-')")
-    
-    # Configuration Instructions
-    safe_print(f"\n{Colors.WARNING}⚙️  Configuration Instructions:{Colors.ENDC}")
-    safe_print("After getting your credentials, update these files:")
-    safe_print("")
-    safe_print(f"{Colors.OKGREEN}telegram_bot.py:{Colors.ENDC}")
-    safe_print("- API_ID = your_api_id  # (number)")
-    safe_print("- API_HASH = 'your_api_hash'  # (string)")
-    safe_print("- PHONE_NUMBER = '+1234567890'  # (your phone)")
-    safe_print("")
-    safe_print(f"{Colors.OKGREEN}rag_manager.py:{Colors.ENDC}")
-    safe_print("- OPENAI_API_KEY = 'sk-your-key-here'")
-    
-    return True
-
-def check_configuration():
-    """Check if configuration files are properly set up"""
-    safe_print(f"\n{Colors.OKCYAN}🔍 Checking configuration...{Colors.ENDC}")
-    
-    issues = []
-    
-    # Check telegram_bot.py
-    try:
-        with open('telegram_bot.py', 'r') as f:
-            content = f.read()
-            if 'YOUR_API_ID' in content or 'API_ID = 25986520' in content:
-                issues.append("telegram_bot.py: API_ID needs to be updated")
-            if 'YOUR_API_HASH' in content:
-                issues.append("telegram_bot.py: API_HASH needs to be updated")
-            if 'YOUR_PHONE_NUMBER' in content:
-                issues.append("telegram_bot.py: PHONE_NUMBER needs to be updated")
-    except FileNotFoundError:
-        issues.append("telegram_bot.py: File not found")
-    
-    # Check rag_manager.py
-    try:
-        with open('rag_manager.py', 'r') as f:
-            content = f.read()
-            if 'YOUR_OPENAI_API_KEY' in content:
-                issues.append("rag_manager.py: OPENAI_API_KEY needs to be updated")
-    except FileNotFoundError:
-        issues.append("rag_manager.py: File not found")
-    
-    if issues:
-        safe_print(f"{Colors.WARNING}⚠️  Configuration issues found:{Colors.ENDC}")
-        for issue in issues:
-            safe_print(f"   - {issue}")
-        safe_print(f"\n{Colors.WARNING}Please update your credentials before running the bot.{Colors.ENDC}")
+    # Check if requirements.txt exists
+    if not os.path.exists("requirements.txt"):
+        print_colored("requirements.txt not found!", Colors.RED)
         return False
+    
+    # Install dependencies
+    success = run_command("pip install -r requirements.txt", 
+                         "Installing required packages...")
+    
+    if success:
+        print_colored("\n✅ Dependencies installed successfully!", Colors.GREEN)
     else:
-        safe_print(f"{Colors.OKGREEN}✅ Configuration looks good!{Colors.ENDC}")
-        return True
-
-def create_example_config():
-    """Create example configuration file"""
-    safe_print(f"\n{Colors.OKCYAN}📝 Creating example configuration...{Colors.ENDC}")
+        print_colored("\n❌ Failed to install dependencies.", Colors.RED)
     
-    config_example = {
-        "telegram": {
-            "api_id": "YOUR_API_ID",
-            "api_hash": "YOUR_API_HASH", 
-            "phone_number": "YOUR_PHONE_NUMBER"
-        },
-        "openai": {
-            "api_key": "YOUR_OPENAI_API_KEY"
-        },
-        "setup_instructions": {
-            "telegram_api": "https://my.telegram.org/apps",
-            "openai_api": "https://platform.openai.com/api-keys"
-        }
-    }
+    return success
+
+def setup_env_file():
+    """Set up the .env configuration file."""
+    print_header("Setting Up Environment Configuration")
+    
+    env_path = Path(".env")
+    env_example_path = Path("env.example")
+    
+    # Check if .env already exists
+    if env_path.exists():
+        print_colored(".env file already exists.", Colors.YELLOW)
+        overwrite = input("Overwrite existing .env file? (y/n): ").lower() == 'y'
+        if not overwrite:
+            print_colored("Keeping existing .env file.", Colors.BLUE)
+            return True
+    
+    # Check if env.example exists
+    if not env_example_path.exists():
+        print_colored("env.example not found! Cannot create .env file.", Colors.RED)
+        return False
+    
+    # Copy env.example to .env
+    shutil.copy(env_example_path, env_path)
+    print_colored("Created .env file from template.", Colors.GREEN)
+    
+    # Ask for configuration values
+    print_colored("\nLet's configure your .env file:", Colors.BLUE)
+    
+    # Telegram configuration
+    print_colored("\nTelegram Configuration:", Colors.CYAN)
+    print_colored("Get these values from https://my.telegram.org/apps", Colors.YELLOW)
+    telegram_api_id = input("Telegram API ID: ").strip()
+    telegram_api_hash = input("Telegram API Hash: ").strip()
+    telegram_phone = input("Telegram Phone Number (with country code, e.g. +1234567890): ").strip()
+    
+    # LLM Provider selection
+    print_colored("\nLLM Provider Selection:", Colors.CYAN)
+    print_colored("1. OpenAI (GPT-4)", Colors.ENDC)
+    print_colored("2. Google Gemini (Recommended: gemini-2.5-flash)", Colors.ENDC)
+    print_colored("3. Vertex AI (Google Cloud)", Colors.ENDC)
+    
+    provider_choice = input("Choose provider (1-3, default: 2): ").strip() or "2"
+    
+    if provider_choice == "1":
+        provider = "openai"
+        print_colored("\nOpenAI Configuration:", Colors.CYAN)
+        print_colored("Get your API key from https://platform.openai.com/api-keys", Colors.YELLOW)
+        openai_api_key = input("OpenAI API Key: ").strip()
+        openai_model = input("OpenAI Model (default: gpt-4): ").strip() or "gpt-4"
+    elif provider_choice == "2":
+        provider = "gemini"
+        print_colored("\nGoogle Gemini Configuration:", Colors.CYAN)
+        print_colored("Get your API key from https://makersuite.google.com/app/apikey", Colors.YELLOW)
+        google_api_key = input("Google AI API Key: ").strip()
+        gemini_model = input("Gemini Model (default: gemini-2.5-flash): ").strip() or "gemini-2.5-flash"
+    elif provider_choice == "3":
+        provider = "vertex_ai"
+        print_colored("\nVertex AI Configuration:", Colors.CYAN)
+        print_colored("Get these from Google Cloud Console", Colors.YELLOW)
+        project_id = input("Google Cloud Project ID: ").strip()
+        location = input("Google Cloud Location (default: us-central1): ").strip() or "us-central1"
+        vertex_model = input("Vertex AI Model (default: google/gemini-2.0-flash-001): ").strip() or "google/gemini-2.0-flash-001"
+    else:
+        print_colored("Invalid choice. Defaulting to Gemini.", Colors.YELLOW)
+        provider = "gemini"
+    
+    # Update .env file
+    with open(env_path, "r") as f:
+        env_content = f.readlines()
+    
+    new_env_content = []
+    for line in env_content:
+        if line.startswith("TELEGRAM_API_ID="):
+            new_env_content.append(f"TELEGRAM_API_ID={telegram_api_id}\n")
+        elif line.startswith("TELEGRAM_API_HASH="):
+            new_env_content.append(f"TELEGRAM_API_HASH={telegram_api_hash}\n")
+        elif line.startswith("TELEGRAM_PHONE_NUMBER="):
+            new_env_content.append(f"TELEGRAM_PHONE_NUMBER={telegram_phone}\n")
+        elif line.startswith("LLM_PROVIDER="):
+            new_env_content.append(f"LLM_PROVIDER={provider}\n")
+        elif provider == "openai" and line.startswith("OPENAI_API_KEY="):
+            new_env_content.append(f"OPENAI_API_KEY={openai_api_key}\n")
+        elif provider == "openai" and line.startswith("OPENAI_MODEL="):
+            new_env_content.append(f"OPENAI_MODEL={openai_model}\n")
+        elif provider == "gemini" and line.startswith("GOOGLE_AI_API_KEY="):
+            new_env_content.append(f"GOOGLE_AI_API_KEY={google_api_key}\n")
+        elif provider == "gemini" and line.startswith("GEMINI_MODEL="):
+            new_env_content.append(f"GEMINI_MODEL={gemini_model}\n")
+        elif provider == "vertex_ai" and line.startswith("GOOGLE_CLOUD_PROJECT_ID="):
+            new_env_content.append(f"GOOGLE_CLOUD_PROJECT_ID={project_id}\n")
+        elif provider == "vertex_ai" and line.startswith("GOOGLE_CLOUD_LOCATION="):
+            new_env_content.append(f"GOOGLE_CLOUD_LOCATION={location}\n")
+        elif provider == "vertex_ai" and line.startswith("VERTEX_AI_MODEL="):
+            new_env_content.append(f"VERTEX_AI_MODEL={vertex_model}\n")
+        else:
+            new_env_content.append(line)
+    
+    with open(env_path, "w") as f:
+        f.writelines(new_env_content)
+    
+    print_colored("\n✅ .env file configured successfully!", Colors.GREEN)
+    return True
+
+async def test_llm_provider():
+    """Test the configured LLM provider."""
+    print_header("Testing LLM Provider")
     
     try:
-        with open('config_example.json', 'w') as f:
-            json.dump(config_example, f, indent=2)
-        safe_print(f"{Colors.OKGREEN}✅ Created config_example.json{Colors.ENDC}")
+        # Import here to ensure dependencies are installed first
+        from dotenv import load_dotenv
+        load_dotenv()
+        
+        from llm_provider import get_llm_provider
+        
+        print_colored("Initializing LLM provider...", Colors.BLUE)
+        provider = get_llm_provider()
+        print_colored(f"✅ Provider initialized: {provider.get_model_name()}", Colors.GREEN)
+        
+        print_colored("\nTesting with a simple query...", Colors.BLUE)
+        response = await provider.generate_response(
+            messages=[{"role": "user", "content": "Hello, please respond with a short greeting."}],
+            max_tokens=100,
+            temperature=0.7
+        )
+        
+        print_colored("\nResponse:", Colors.GREEN)
+        print_colored(response, Colors.ENDC)
+        
+        print_colored("\n✅ LLM provider test successful!", Colors.GREEN)
         return True
+        
     except Exception as e:
-        safe_print(f"{Colors.FAIL}❌ Failed to create config example: {e}{Colors.ENDC}")
+        print_colored(f"\n❌ Error testing LLM provider: {e}", Colors.RED)
         return False
 
-def final_instructions():
-    """Show final instructions"""
-    safe_print(f"\n{Colors.HEADER}🎉 Installation Complete!{Colors.ENDC}")
-    safe_print(f"{Colors.HEADER}{'='*40}{Colors.ENDC}")
+def show_next_steps():
+    """Show next steps to the user."""
+    print_header("Next Steps")
     
-    safe_print(f"\n{Colors.OKGREEN}✅ Next Steps:{Colors.ENDC}")
-    safe_print("1. Update your credentials in the configuration files")
-    safe_print("2. Run the launcher: python launcher.py")
-    safe_print("3. Or use the convenience scripts:")
-    safe_print("   - Windows: run.bat")
-    safe_print("   - Linux/Mac: ./run.sh")
+    print_colored("1. Run the bot:", Colors.CYAN)
+    print_colored("   python telegram_bot_rag.py", Colors.YELLOW)
     
-    safe_print(f"\n{Colors.OKCYAN}📚 Documentation:{Colors.ENDC}")
-    safe_print("- Full setup guide: README.md")
-    safe_print("- Example config: config_example.json")
+    print_colored("\n2. Test the LLM provider:", Colors.CYAN)
+    print_colored("   python test_all_providers.py --simple", Colors.YELLOW)
     
-    safe_print(f"\n{Colors.WARNING}💡 Tips:{Colors.ENDC}")
-    safe_print("- Keep the launcher console open to monitor both services")
-    safe_print("- Access RAG Manager at: http://localhost:8501")
-    safe_print("- Use Ctrl+C to stop all services")
+    print_colored("\n3. Run comprehensive tests:", Colors.CYAN)
+    print_colored("   python test_all_providers.py", Colors.YELLOW)
     
-    safe_print(f"\n{Colors.OKGREEN}🚀 Ready to launch!{Colors.ENDC}")
+    print_colored("\n4. Switch to Gemini 2.5 Flash:", Colors.CYAN)
+    print_colored("   python switch_to_gemini25.py", Colors.YELLOW)
+    
+    print_colored("\n5. Check current provider:", Colors.CYAN)
+    print_colored("   python check_llm_provider.py", Colors.YELLOW)
+    
+    print_colored("\nFor more information, see:", Colors.CYAN)
+    print_colored("- README.md - General overview", Colors.YELLOW)
+    print_colored("- LLM_PROVIDER_GUIDE.md - LLM provider documentation", Colors.YELLOW)
+    print_colored("- RESPONSE_LENGTH_GUIDE.md - Response length limitation details", Colors.YELLOW)
 
-def main():
-    """Main installation function"""
-    print_banner()
+async def main():
+    """Main installation process."""
+    print_colored("\n🤖 Agent Daredevil Telegram Bot - Installation Helper", Colors.HEADER)
+    print_colored("=" * 60, Colors.HEADER)
     
-    # Step 1: Check Python version
-    if not check_python_version():
-        sys.exit(1)
+    # Step 1: Install dependencies
+    if not install_dependencies():
+        print_colored("\n❌ Installation failed at dependency installation step.", Colors.RED)
+        return
     
-    # Step 2: Install packages
-    if not install_packages():
-        safe_print(f"\n{Colors.FAIL}❌ Installation failed. Please check the errors above.{Colors.ENDC}")
-        sys.exit(1)
+    # Step 2: Set up .env file
+    if not setup_env_file():
+        print_colored("\n❌ Installation failed at environment configuration step.", Colors.RED)
+        return
     
-    # Step 3: Guide credential setup
-    guide_credential_setup()
+    # Step 3: Test LLM provider
+    if not await test_llm_provider():
+        print_colored("\n⚠️ LLM provider test failed. Check your configuration.", Colors.YELLOW)
+        print_colored("You can still proceed, but the bot may not work correctly.", Colors.YELLOW)
     
-    # Step 4: Create example config
-    create_example_config()
+    # Step 4: Show next steps
+    show_next_steps()
     
-    # Step 5: Check current configuration
-    check_configuration()
-    
-    # Step 6: Final instructions
-    final_instructions()
+    print_colored("\n✅ Installation completed successfully!", Colors.GREEN)
+    print_colored("You're now ready to run Agent Daredevil Telegram Bot.", Colors.GREEN)
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        safe_print(f"\n{Colors.WARNING}Installation cancelled by user.{Colors.ENDC}")
-    except Exception as e:
-        safe_print(f"\n{Colors.FAIL}❌ Unexpected error: {e}{Colors.ENDC}")
-        sys.exit(1) 
+    asyncio.run(main()) 
