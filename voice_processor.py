@@ -170,6 +170,82 @@ class VoiceProcessor:
             logger.error(f"Error in speech-to-text conversion: {e}")
             return None
     
+    def estimate_speech_duration(self, text: str) -> float:
+        """
+        Estimate speech duration in seconds based on text length.
+        
+        Args:
+            text: Text to estimate duration for
+            
+        Returns:
+            float: Estimated duration in seconds
+        """
+        # Average speech rate: ~150 words per minute = 2.5 words per second
+        # Average characters per word: ~5 (including spaces)
+        # So ~12.5 characters per second
+        words = len(text.split())
+        estimated_seconds = words / 2.5
+        return estimated_seconds
+
+    async def _generate_voice_optimized_response(self, rag_manager, message_text: str, user_id: str) -> str:
+        """
+        Generate a response optimized for voice (under 20 seconds).
+        
+        Args:
+            rag_manager: The RAG manager instance
+            message_text: The transcribed voice message
+            user_id: User ID for context
+            
+        Returns:
+            str: Voice-optimized response
+        """
+        try:
+            # First, try to generate a regular response
+            response = await rag_manager.generate_response(message_text, user_id)
+            
+            # Check if it's already under 20 seconds
+            if self.estimate_speech_duration(response) <= 20:
+                return response
+            
+            # If too long, generate a shorter response
+            logger.info(f"Response too long for voice ({self.estimate_speech_duration(response):.1f}s), generating shorter version")
+            
+            # Create a voice-optimized system prompt
+            system_prompt = rag_manager._create_system_prompt(user_id)
+            system_prompt += "\n\nIMPORTANT: This is for a VOICE response. Keep your answer very concise - maximum 2-3 short sentences that can be spoken in under 20 seconds. Focus on the most important information only."
+            
+            # Get minimal context for voice responses
+            session_context = ""
+            if rag_manager.config['use_memory']:
+                # Get only the most recent context for voice
+                recent_messages = rag_manager.session_memory.get_conversation_history(int(user_id), limit=2)
+                if recent_messages:
+                    session_context = "\n\nRECENT CONTEXT:\n" + "\n".join([f"{msg.role}: {msg.content}" for msg in recent_messages[-2:]])
+            
+            # Prepare messages for shorter response
+            messages = [
+                {"role": "system", "content": system_prompt + session_context},
+                {"role": "user", "content": message_text}
+            ]
+            
+            # Generate shorter response with lower max_tokens
+            voice_response = await rag_manager.llm_provider.generate_response(
+                messages=messages,
+                max_tokens=150,  # Much lower token limit for voice
+                temperature=0.7
+            )
+            
+            # Double-check the duration
+            final_duration = self.estimate_speech_duration(voice_response)
+            logger.info(f"Generated voice-optimized response: {final_duration:.1f}s")
+            
+            return voice_response
+            
+        except Exception as e:
+            logger.error(f"Error generating voice-optimized response: {e}")
+            # Fallback to regular response
+            return await rag_manager.generate_response(message_text, user_id)
+
     async def text_to_speech(self, text: str) -> Optional[bytes]:
         """
         Convert text to speech using ElevenLabs.
@@ -193,10 +269,25 @@ class VoiceProcessor:
                 logger.warning("Empty text provided for TTS")
                 return None
             
-            # Limit text length for voice - allow longer responses but still reasonable for TTS
-            if len(text) > 200:
-                text = text[:200] + "..."
-                logger.info("Text truncated for TTS - response was very long")
+            # Estimate speech duration and limit to 20 seconds
+            estimated_duration = self.estimate_speech_duration(text)
+            max_characters = 350  # ~20 seconds at average speech rate
+            
+            if len(text) > max_characters or estimated_duration > 20:
+                # Truncate text to fit within 20 seconds
+                truncated_text = text[:max_characters]
+                # Try to end at a sentence boundary
+                last_period = truncated_text.rfind('.')
+                last_exclamation = truncated_text.rfind('!')
+                last_question = truncated_text.rfind('?')
+                
+                last_sentence_end = max(last_period, last_exclamation, last_question)
+                if last_sentence_end > max_characters * 0.7:  # If we can find a good sentence break
+                    text = truncated_text[:last_sentence_end + 1]
+                else:
+                    text = truncated_text + "..."
+                
+                logger.info(f"Text truncated for TTS - estimated duration was {estimated_duration:.1f}s, truncated to ~{self.estimate_speech_duration(text):.1f}s")
             
             # Generate speech using ElevenLabs
             audio = self.elevenlabs_client.text_to_speech.convert(
@@ -211,7 +302,7 @@ class VoiceProcessor:
                 audio_bytes = b''.join(audio)
             else:
                 audio_bytes = audio
-            logger.info(f"TTS successful: {len(audio_bytes)} bytes")
+            logger.info(f"TTS successful: {len(audio_bytes)} bytes, estimated duration: {self.estimate_speech_duration(text):.1f}s")
             return audio_bytes
             
         except Exception as e:
@@ -303,33 +394,44 @@ class VoiceProcessor:
             if not should_respond:
                 return transcribed_text
             
-            # Generate response using RAG
-            response_text = await rag_manager.generate_response(transcribed_text, message.sender_id)
+            # Generate response using RAG with voice-optimized length
+            response_text = await self._generate_voice_optimized_response(rag_manager, transcribed_text, message.sender_id)
             
-            # Convert response to speech
-            response_audio = await self.text_to_speech(response_text)
+            # Check if response would exceed 20 seconds when spoken
+            estimated_duration = self.estimate_speech_duration(response_text)
             
-            if response_audio:
-                # Send ONLY voice response for voice messages
-                with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
-                    temp_audio.write(response_audio)
-                    temp_audio_path = temp_audio.name
-                
-                try:
-                    await client.send_file(
-                        message.chat_id,
-                        temp_audio_path,
-                        voice_note=True
-                        # No caption - pure voice response only
-                    )
-                finally:
-                    os.unlink(temp_audio_path)
-            else:
-                # Fallback to text response if TTS fails
+            if estimated_duration > 20:
+                # Response too long for voice - send as text instead
+                logger.info(f"Response too long for voice ({estimated_duration:.1f}s > 20s) - sending as text")
                 await client.send_message(
                     message.chat_id,
-                    f"🎤 I heard: \"{transcribed_text}\"\n\n📝 {response_text}\n\n(Voice response failed, sending text instead)"
+                    f"🎤 I heard: \"{transcribed_text}\"\n\n📝 {response_text}"
                 )
+            else:
+                # Convert response to speech
+                response_audio = await self.text_to_speech(response_text)
+                
+                if response_audio:
+                    # Send ONLY voice response for voice messages
+                    with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
+                        temp_audio.write(response_audio)
+                        temp_audio_path = temp_audio.name
+                    
+                    try:
+                        await client.send_file(
+                            message.chat_id,
+                            temp_audio_path,
+                            voice_note=True
+                            # No caption - pure voice response only
+                        )
+                    finally:
+                        os.unlink(temp_audio_path)
+                else:
+                    # Fallback to text response if TTS fails
+                    await client.send_message(
+                        message.chat_id,
+                        f"🎤 I heard: \"{transcribed_text}\"\n\n📝 {response_text}\n\n(Voice response failed, sending text instead)"
+                    )
             
             return transcribed_text
             
