@@ -58,7 +58,22 @@ class VoiceProcessor:
         self.similarity_boost = float(os.getenv('ELEVENLABS_SIMILARITY_BOOST', '0.5'))
         self.use_voice_features = os.getenv('USE_VOICE_FEATURES', 'True').lower() == 'true'
         
+        # Test ElevenLabs permissions
+        self.elevenlabs_working = self._test_elevenlabs_permissions()
+        
         logger.info(f"VoiceProcessor initialized with voice_id: {self.voice_id}")
+        if not self.elevenlabs_working:
+            logger.warning("ElevenLabs API has permission issues - voice features will be limited")
+    
+    def _test_elevenlabs_permissions(self) -> bool:
+        """Test if ElevenLabs API has proper permissions."""
+        try:
+            # Try to get voices list to test permissions
+            voices = self.elevenlabs_client.voices.get_all()
+            return True
+        except Exception as e:
+            logger.error(f"ElevenLabs permissions test failed: {e}")
+            return False
     
     async def is_voice_message(self, message) -> bool:
         """
@@ -162,6 +177,10 @@ class VoiceProcessor:
         try:
             if not self.use_voice_features:
                 logger.info("Voice features disabled")
+                return None
+            
+            if not self.elevenlabs_working:
+                logger.warning("ElevenLabs API not working due to permissions - skipping TTS")
                 return None
             
             if not text or len(text.strip()) == 0:
@@ -318,7 +337,10 @@ class VoiceProcessor:
     
     def is_enabled(self) -> bool:
         """Check if voice features are enabled."""
-        return self.use_voice_features and bool(os.getenv('ELEVENLABS_API_KEY')) and bool(os.getenv('OPENAI_API_KEY'))
+        return (self.use_voice_features and 
+                bool(os.getenv('ELEVENLABS_API_KEY')) and 
+                bool(os.getenv('OPENAI_API_KEY')) and
+                self.elevenlabs_working)
 
 # Global instance
 voice_processor = VoiceProcessor()

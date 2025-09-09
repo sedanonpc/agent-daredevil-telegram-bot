@@ -431,7 +431,7 @@ class AgentDaredevilBot:
             
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            return "I apologize, but I'm experiencing some technical difficulties. Please try again."
+            return "Sorry, our servers are a bit loaded right now, try again later [6656]"
 
     async def setup_handlers(self):
         """Setup Telegram event handlers."""
@@ -543,6 +543,11 @@ class AgentDaredevilBot:
             # Skip messages from self
             if event.sender_id == (await self.client.get_me()).id:
                 logger.info("Skipping message from self")
+                return
+            
+            # Skip messages from Telegram system accounts
+            if event.sender_id in [777000, 424000]:  # Telegram system accounts
+                logger.info("Skipping Telegram system message")
                 return
             
             user_id = str(event.sender_id)

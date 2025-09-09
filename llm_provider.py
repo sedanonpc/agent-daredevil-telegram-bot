@@ -189,6 +189,7 @@ class GeminiProvider(LLMProvider):
     def _convert_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """Convert OpenAI format messages to Gemini format."""
         gemini_messages = []
+        system_content = None
         
         for msg in messages:
             role = msg["role"]
@@ -196,18 +197,19 @@ class GeminiProvider(LLMProvider):
             
             # Convert OpenAI roles to Gemini roles
             if role == "system":
-                # Gemini doesn't have system role, prepend to first user message
-                if gemini_messages and gemini_messages[-1]["role"] == "user":
-                    gemini_messages[-1]["parts"] = [f"System: {content}\n\nUser: {gemini_messages[-1]['parts'][0]}"]
-                else:
-                    gemini_messages.append({
-                        "role": "user",
-                        "parts": [f"System: {content}"]
-                    })
+                # Store system content to prepend to next user message
+                system_content = content
             elif role == "user":
+                # Combine system content with user message if available
+                if system_content:
+                    combined_content = f"System: {system_content}\n\nUser: {content}"
+                    system_content = None  # Reset after using
+                else:
+                    combined_content = content
+                
                 gemini_messages.append({
                     "role": "user", 
-                    "parts": [content]
+                    "parts": [combined_content]
                 })
             elif role == "assistant":
                 gemini_messages.append({
@@ -257,6 +259,17 @@ class GeminiProvider(LLMProvider):
                     gemini_messages[0]["parts"][0],
                     generation_config=generation_config if generation_config else None
                 )
+                
+                # Check if response was blocked by safety filters
+                if response.candidates and response.candidates[0].finish_reason == 2:
+                    logger.warning("Gemini response blocked by safety filters")
+                    return "I understand your question, but I'm unable to provide a response due to content safety guidelines. Could you please rephrase your question?"
+                
+                # Check if response has text content
+                if not response.text:
+                    logger.warning("Gemini response has no text content")
+                    return "I'm having trouble generating a response right now. Please try rephrasing your question."
+                
                 raw_response = response.text.strip()
             else:
                 # For multi-turn, create a chat and send messages
@@ -272,6 +285,17 @@ class GeminiProvider(LLMProvider):
                     gemini_messages[-1]["parts"][0],
                     generation_config=generation_config if generation_config else None
                 )
+                
+                # Check if response was blocked by safety filters
+                if response.candidates and response.candidates[0].finish_reason == 2:
+                    logger.warning("Gemini response blocked by safety filters")
+                    return "I understand your question, but I'm unable to provide a response due to content safety guidelines. Could you please rephrase your question?"
+                
+                # Check if response has text content
+                if not response.text:
+                    logger.warning("Gemini response has no text content")
+                    return "I'm having trouble generating a response right now. Please try rephrasing your question."
+                
                 raw_response = response.text.strip()
             
             # Apply response length limit
