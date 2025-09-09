@@ -66,13 +66,19 @@ class VoiceProcessor:
             logger.warning("ElevenLabs API has permission issues - voice features will be limited")
     
     def _test_elevenlabs_permissions(self) -> bool:
-        """Test if ElevenLabs API has proper permissions."""
+        """Test if ElevenLabs API has proper permissions for TTS."""
         try:
-            # Try to get voices list to test permissions
-            voices = self.elevenlabs_client.voices.get_all()
+            # Test TTS conversion directly instead of checking voices list
+            # This is more reliable since some API keys don't have voices_read permission
+            test_audio = self.elevenlabs_client.text_to_speech.convert(
+                text="test",
+                voice_id=self.voice_id,
+                model_id=self.model,
+                output_format="mp3_44100_128"
+            )
             return True
         except Exception as e:
-            logger.error(f"ElevenLabs permissions test failed: {e}")
+            logger.error(f"ElevenLabs TTS test failed: {e}")
             return False
     
     async def is_voice_message(self, message) -> bool:
