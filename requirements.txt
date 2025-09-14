@@ -25,14 +25,7 @@ html5lib>=1.1
 pandas>=2.0.0
 numpy>=1.24.0
 
-# Web Crawler Dependencies
-sqlite3  # Built-in with Python
-concurrent.futures  # Built-in with Python
-threading  # Built-in with Python
-queue  # Built-in with Python
-hashlib  # Built-in with Python
-urllib.robotparser  # Built-in with Python
-urllib.parse  # Built-in with Python
+# Web Crawler Dependencies (stdlib modules removed)
 
 # Optional Performance Packages
 cryptg>=0.4.0
