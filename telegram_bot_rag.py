@@ -7,7 +7,7 @@ import sys
 import json
 from pathlib import Path
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 import chromadb
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
@@ -587,6 +587,27 @@ def _detect_statistical_query(query: str) -> bool:
 def _assess_rag_sufficiency(query: str, rag_context: List[Tuple[Any, float]]) -> Dict[str, Any]:
     """Assess if RAG context has sufficient information for the specific query"""
     if not rag_context:
+        # Check if this is casual conversation that doesn't need web search
+        query_lower = query.lower()
+        casual_patterns = [
+            r'^(hi|hello|hey|sup|whats up|yo|yooo|good morning|good afternoon|good evening)',
+            r'(how are you|how\s+are\s+ya|whats going on|how do you do)',
+            r'^(thanks|thank you|thx|ty)',
+            r'^(bye|goodbye|see you|later)',
+            r'(nice|cool|awesome|great|good)',
+            r'^(yes|no|yeah|nah|yep|nope)',
+            r'(mf|bro|dude|man|buddy)',
+        ]
+        
+        for pattern in casual_patterns:
+            if re.search(pattern, query_lower):
+                return {
+                    'sufficient': False,
+                    'reason': 'casual_conversation',
+                    'confidence': 0.0,
+                    'recommendation': 'direct_response'
+                }
+        
         return {
             'sufficient': False,
             'reason': 'no_rag_results',
@@ -1146,7 +1167,7 @@ async def get_hybrid_response(user_message: str, event, openai_client, vectorsto
         web_results = []
         web_assessment = None
         
-        # Only trigger web search if RAG is insufficient
+        # Only trigger web search if RAG is insufficient and not casual conversation
         if rag_assessment['recommendation'] in ['web_search', 'use_rag_with_web_fallback']:
             try:
                 search_query = enhanced_query if is_contextual_query else user_message
@@ -1211,6 +1232,12 @@ Respond as Agent Daredevil asking for clarification:"""
                 response_data['method'] = 'clarification_request'
                 response_data['prefix'] = '❓ '
                 response_data['sources'] = ['Needs Clarification']
+            elif rag_assessment['recommendation'] == 'direct_response':
+                safe_print("[HYBRID] Step 3: Creating direct response prompt (casual conversation)")
+                prompt = create_hybrid_prompt(user_message, [], [], character_data, conversation_context)
+                response_data['method'] = 'direct_response'
+                response_data['prefix'] = '👋 '
+                response_data['sources'] = ['Casual Conversation']
             elif rag_context or web_results:
                 safe_print(f"[HYBRID] Step 3: Creating hybrid prompt with {len(rag_context)} RAG + {len(web_results)} web results")
                 
