@@ -1,19 +1,19 @@
-# 🤖 Agent Daredevil - Telegram Bot with RAG
+# 🤖 Agent Daredevil Telegram Bot
 
-A sophisticated Telegram bot powered by OpenAI and Retrieval-Augmented Generation (RAG) capabilities. Agent Daredevil can chat naturally, search knowledge bases, crawl websites, and maintain character consistency.
+A sophisticated Telegram bot powered by multiple LLM providers (OpenAI, Google Gemini, Vertex AI) with Retrieval-Augmented Generation (RAG) capabilities. Agent Daredevil can chat naturally, search knowledge bases, crawl websites, and maintain character consistency.
 
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Telegram](https://img.shields.io/badge/telegram-bot-blue.svg)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4-brightgreen.svg)
+![LLM](https://img.shields.io/badge/LLM-Multi--Provider-brightgreen.svg)
 
 ## ✨ Features
 
 ### 🧠 **Core Intelligence**
-- **OpenAI Integration**: Powered by GPT-4 for natural conversations
+- **Multi-LLM Support**: Switch between OpenAI GPT-4, Google Gemini, and Vertex AI
+- **Concise Responses**: All responses limited to 3-5 sentences for clarity and focus
 - **RAG System**: Knowledge base retrieval using ChromaDB vector store
 - **Character Consistency**: Maintains Agent Daredevil persona across conversations
-- **Context Awareness**: Real-time date/time and NBA season tracking
 
 ### 🌐 **Knowledge Management**
 - **Web Crawler**: Automated NBA statistics and website crawling
@@ -23,8 +23,8 @@ A sophisticated Telegram bot powered by OpenAI and Retrieval-Augmented Generatio
 
 ### 🎮 **Advanced Features**
 - **God Commands**: Override responses with specific instructions
-- **Streamlit Interface**: Web-based knowledge base management
-- **Session Management**: Persistent Telegram sessions
+- **Voice Processing**: Handle voice messages with speech-to-text and text-to-speech
+- **Session Memory**: Persistent Telegram sessions
 - **Error Handling**: Robust error recovery and logging
 
 ## 🚀 Quick Start
@@ -56,179 +56,130 @@ TELEGRAM_API_ID=your_api_id_here
 TELEGRAM_API_HASH=your_api_hash_here
 TELEGRAM_PHONE_NUMBER=+1234567890
 
+# LLM Provider Configuration
+LLM_PROVIDER=gemini  # Choose: openai, gemini, or vertex_ai
+
 # OpenAI API (get from https://platform.openai.com/api-keys)
 OPENAI_API_KEY=sk-your-openai-api-key-here
+OPENAI_MODEL=gpt-4
+
+# Google AI (Gemini) Configuration
+GOOGLE_AI_API_KEY=your-google-ai-key-here
+GEMINI_MODEL=gemini-2.5-flash
+
+# Vertex AI Configuration (if using)
+GOOGLE_CLOUD_PROJECT_ID=your-project-id
+GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 ### 4. **Run the Bot**
-
-**Basic Bot (No RAG):**
-```bash
-python telegram_bot.py
-```
 
 **Advanced Bot (With RAG):**
 ```bash
 python telegram_bot_rag.py
 ```
 
-**Knowledge Base Manager:**
+## 🔄 LLM Provider Management
+
+### Checking Current Provider
+
+To check which LLM provider and model is currently being used:
+
 ```bash
-streamlit run rag_manager.py
+python check_llm_provider.py
 ```
 
-## 📁 Project Structure
+This will display:
+- Current provider setting (from .env)
+- Configured model name
+- Actual model being used
+
+### Switching to Gemini 2.5 Flash
+
+To quickly switch to Gemini 2.5 Flash:
+
+```bash
+python switch_to_gemini25.py
+```
+
+This script will update your .env file to use Gemini as the provider and set the model to gemini-2.5-flash.
+
+### Testing LLM Providers
+
+The comprehensive test script supports multiple testing modes:
+
+```bash
+# Test all available providers
+python test_all_providers.py
+
+# Test a specific provider
+python test_all_providers.py --provider gemini
+
+# Quick test of current provider
+python test_all_providers.py --simple
+
+# Test Gemini 2.5 Flash specifically
+python test_all_providers.py --gemini25
+```
+
+## 📝 Concise Responses
+
+The bot generates concise responses limited to 3-5 sentences. This ensures responses are focused and to the point.
+
+### Response Length Guidelines
+
+All responses follow these guidelines:
+- Standard responses: 3-5 sentences
+- Data-heavy responses: Up to 6 sentences with data summary in the last sentence
+- Small talk: 3 sentences maximum
+
+For more details, see the [Response Length Guide](./RESPONSE_LENGTH_GUIDE.md).
+
+## 🔧 Provider Comparison
+
+| Provider | Speed | Cost | Features | Best For |
+|----------|-------|------|----------|----------|
+| OpenAI GPT-4 | Medium | High | Most mature | Complex reasoning |
+| Gemini 2.5 Flash | Fast | Low | Newest model | General use, best value |
+| Gemini 1.5 Pro | Medium | Medium | Long context | Complex tasks |
+| Vertex AI | Medium | Medium | Enterprise features | Business use |
+
+For more details, see the comprehensive [LLM Provider Guide](./LLM_PROVIDER_GUIDE.md).
+
+## 🛠️ Project Structure
 
 ```
 📁 agent-daredevil-telegram-bot/
-├── 🤖 **Core Bot Files**
-│   ├── telegram_bot.py              # Basic bot without RAG
-│   ├── telegram_bot_rag.py          # Advanced bot with RAG
-│   └── cryptodevil.character.json   # Character personality
+├── 🤖 Core Bot Files
+│   ├── telegram_bot_rag.py         # Main bot with RAG
+│   ├── llm_provider.py             # LLM provider abstraction
+│   └── session_memory.py           # Session memory management
 │
-├── 🧠 **Knowledge & Data**
-│   ├── rag_manager.py               # Streamlit knowledge manager
-│   ├── basketball_reference_crawler.py  # NBA data crawler
-│   └── crawler_config.py            # Crawler configuration
+├── 🧠 Knowledge & Data
+│   ├── voice_processor.py          # Voice message handling
+│   └── cryptodevil.character.json  # Character personality
 │
-├── 🏃 **Launcher Scripts**
-│   ├── launcher.py                  # Multi-option launcher
-│   ├── run_crawler.py              # Crawler runner
-│   ├── run.bat                     # Windows batch script
-│   └── run.sh                      # Unix shell script
+├── 🔧 Utility Scripts
+│   ├── check_llm_provider.py       # Check current provider
+│   ├── switch_to_gemini25.py       # Switch to Gemini 2.5
+│   └── test_all_providers.py       # Comprehensive test script
 │
-├── 🧪 **Testing & Utils**
-│   ├── test_*.py                   # Various test files
-│   └── install.py                  # Installation helper
-│
-└── 📋 **Configuration**
-    ├── requirements.txt            # Python dependencies
-    ├── env.example                # Environment template
-    ├── .gitignore                 # Git ignore rules
-    └── README.md                  # This file
+└── 📋 Documentation
+    ├── README.md                   # This file
+    ├── LLM_PROVIDER_GUIDE.md       # Provider documentation
+    ├── RESPONSE_LENGTH_GUIDE.md    # Response length documentation
+    ├── GEMINI_25_SETUP.md          # Gemini 2.5 setup guide
+    └── env.example                 # Environment template
 ```
-
-## 🎯 Usage Guide
-
-### **Basic Telegram Bot**
-- Simple OpenAI-powered chat bot
-- No knowledge base or RAG features
-- Good for testing and basic conversations
-
-### **RAG-Enabled Bot**
-- Full knowledge base integration
-- Web crawling and document processing
-- Advanced context awareness
-- Character personality maintenance
-
-### **Knowledge Base Manager**
-- Web interface at `http://localhost:8501`
-- Upload documents and URLs
-- Search knowledge base
-- Manage God Commands
-- View statistics
-
-## ⚙️ Configuration
-
-### **Character Customization**
-Edit `cryptodevil.character.json` to modify:
-- Personality traits
-- Response style
-- Background story
-- Behavioral guidelines
-
-### **RAG Settings**
-In `telegram_bot_rag.py`:
-```python
-USE_RAG = True  # Enable/disable RAG
-CHROMA_DB_PATH = "./chroma_db"  # Vector store location
-```
-
-### **Crawler Configuration**
-In `crawler_config.py`:
-```python
-CRAWL_DELAY = 4.0  # Delay between requests
-MAX_PAGES = 100    # Maximum pages to crawl
-THREADS = 2        # Concurrent threads
-```
-
-## 🛠️ Development
-
-### **Adding New Features**
-1. Create feature branch: `git checkout -b feature-name`
-2. Implement changes
-3. Add tests in `test_*` files
-4. Update documentation
-5. Submit pull request
-
-### **Testing**
-```bash
-# Run specific tests
-python test_crawler.py
-python test_enhanced_crawler.py
-
-# Run with different configurations
-python test_conservative_crawler.py
-python test_rate_limit_safe.py
-```
-
-### **Logging**
-Logs are saved to:
-- `crawler.log` - Web crawler logs
-- `basketball_crawler.log` - NBA data logs
-
-## 🔧 Troubleshooting
-
-### **Common Issues**
-
-**"Database is locked" Error:**
-```bash
-# Stop all running processes
-# Delete session files
-rm *.session*
-```
-
-**"Missing credentials" Error:**
-- Check `.env` file exists
-- Verify all required variables are set
-- Ensure API keys are valid
-
-**RAG Not Working:**
-- Check ChromaDB installation
-- Verify knowledge base has content
-- Review logs for vector store errors
-
-### **Getting Help**
-
-1. **Check Logs**: Review `.log` files for errors
-2. **Verify Setup**: Ensure all environment variables are correct
-3. **Test Components**: Run individual test files
-4. **Issue Tracker**: Report bugs on GitHub Issues
 
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
 ## 🙏 Acknowledgments
 
 - [Telethon](https://github.com/LonamiWebs/Telethon) - Telegram API library
 - [OpenAI](https://openai.com/) - GPT-4 API
+- [Google AI](https://ai.google.dev/) - Gemini API
 - [ChromaDB](https://www.trychroma.com/) - Vector database
-- [Streamlit](https://streamlit.io/) - Web interface framework
-- [LangChain](https://langchain.com/) - RAG framework
-
-## 📞 Support
-
-For support, join our Telegram group or open an issue on GitHub.
-
----
-
-**Made with ❤️ by the Agent Daredevil Team** 
+- [LangChain](https://langchain.com/) - RAG framework 

@@ -1,0 +1,29 @@
+# Voice note handling code to add to message_handler
+# Check if the message contains a voice note and voice features are enabled
+if VOICE_AVAILABLE and USE_VOICE_FEATURES and event.media and hasattr(event.media, 'document') and event.media.document:
+    for attribute in event.media.document.attributes:
+        if hasattr(attribute, 'voice') and attribute.voice:
+            safe_print("[VOICE] Received voice note, processing...")
+            
+            # Send typing indicator
+            async with client.action(event.chat_id, 'typing'):
+                try:
+                    # Transcribe voice note to text
+                    transcribed_text = await voice_processor.process_voice_message(event)
+                    
+                    if transcribed_text and not transcribed_text.startswith("Error"):
+                        # Replace the message text with the transcribed text
+                        message_text = transcribed_text
+                        safe_print(f"[VOICE] Transcribed: {message_text}")
+                        
+                        # Send acknowledgment that we're processing the voice note
+                        await event.respond(f"??? I heard: \"{message_text}\"\n\nThinking...")
+                    else:
+                        # If transcription failed, respond with an error message
+                        await event.respond(f"Sorry, I couldn't understand your voice note: {transcribed_text}")
+                        return
+                except Exception as e:
+                    safe_print(f"[ERR] Voice processing error: {str(e)}")
+                    await event.respond(f"Sorry, I encountered an error processing your voice note: {str(e)}")
+                    return
+            break
