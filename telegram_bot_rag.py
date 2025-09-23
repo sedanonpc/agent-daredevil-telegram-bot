@@ -629,9 +629,25 @@ class AgentDaredevilBot:
             except Exception as e:
                 if "EOF when reading a line" in str(e) or "input" in str(e).lower():
                     logger.error("❌ Authentication failed: No interactive terminal available in Docker")
-                    logger.error("💡 Please ensure your session file is valid and authenticated locally first")
-                    logger.error("💡 Run the bot locally once to create/update the session file, then deploy")
-                    raise Exception("Telegram authentication requires interactive session setup")
+                    logger.error("💡 Solution: Use Railway's environment variables for authentication")
+                    logger.error("💡 Add TELEGRAM_BOT_TOKEN to Railway variables if using bot token")
+                    logger.error("💡 Or ensure session file is properly authenticated locally first")
+                    
+                    # Check if we have a bot token as alternative
+                    bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+                    if bot_token:
+                        logger.info("🤖 Bot token found! Switching to bot authentication...")
+                        # Create a new client with bot token
+                        from telethon import TelegramClient
+                        self.client = TelegramClient(
+                            'bot_session',
+                            self.config['telegram_api_id'],
+                            self.config['telegram_api_hash']
+                        )
+                        await self.client.start(bot_token=bot_token)
+                        logger.info("✅ Bot authentication successful!")
+                    else:
+                        raise Exception("Telegram authentication requires interactive session setup or bot token")
                 else:
                     raise e
             

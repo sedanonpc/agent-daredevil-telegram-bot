@@ -62,8 +62,9 @@ chroma_db/
 memory.db
 basketball_crawler.db
 
-# Session files - KEEP THESE for authentication
-# *.session
+# Session files - Commented out for Railway deployment
+# Note: In production, consider using TELEGRAM_BOT_TOKEN instead
+*.session
 
 # Environment files (will be passed as environment variables)
 .env
