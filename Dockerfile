@@ -77,9 +77,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Expose port (if needed for web services)
 EXPOSE 8000
 
-# Health check endpoint for Railway
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
+# No health check needed for Telegram bot
 
 # Default command (can be overridden by Railway)
 CMD ["python", "telegram_bot_rag.py"]
