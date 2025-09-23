@@ -187,65 +187,6 @@ class VoiceProcessor:
         estimated_seconds = words / 2.5
         return estimated_seconds
 
-    async def _generate_voice_optimized_response(self, rag_manager, message_text: str, user_id: str) -> str:
-        """
-        Generate a response optimized for voice (under 20 seconds).
-        
-        Args:
-            rag_manager: The RAG manager instance
-            message_text: The transcribed voice message
-            user_id: User ID for context
-            
-        Returns:
-            str: Voice-optimized response
-        """
-        try:
-            # First, try to generate a regular response
-            response = await rag_manager.generate_response(message_text, user_id)
-            
-            # Check if it's already under 20 seconds
-            if self.estimate_speech_duration(response) <= 20:
-                return response
-            
-            # If too long, generate a shorter response
-            logger.info(f"Response too long for voice ({self.estimate_speech_duration(response):.1f}s), generating shorter version")
-            
-            # Create a voice-optimized system prompt
-            system_prompt = rag_manager._create_system_prompt(user_id)
-            system_prompt += "\n\nIMPORTANT: This is for a VOICE response. Keep your answer very concise - maximum 2-3 short sentences that can be spoken in under 20 seconds. Focus on the most important information only."
-            
-            # Get minimal context for voice responses
-            session_context = ""
-            if rag_manager.config['use_memory']:
-                # Get only the most recent context for voice
-                recent_messages = rag_manager.session_memory.get_conversation_history(int(user_id), limit=2)
-                if recent_messages:
-                    session_context = "\n\nRECENT CONTEXT:\n" + "\n".join([f"{msg.role}: {msg.content}" for msg in recent_messages[-2:]])
-            
-            # Prepare messages for shorter response
-            messages = [
-                {"role": "system", "content": system_prompt + session_context},
-                {"role": "user", "content": message_text}
-            ]
-            
-            # Generate shorter response with lower max_tokens
-            voice_response = await rag_manager.llm_provider.generate_response(
-                messages=messages,
-                max_tokens=150,  # Much lower token limit for voice
-                temperature=0.7
-            )
-            
-            # Double-check the duration
-            final_duration = self.estimate_speech_duration(voice_response)
-            logger.info(f"Generated voice-optimized response: {final_duration:.1f}s")
-            
-            return voice_response
-            
-        except Exception as e:
-            logger.error(f"Error generating voice-optimized response: {e}")
-            # Fallback to regular response
-            return await rag_manager.generate_response(message_text, user_id)
-
     async def text_to_speech(self, text: str) -> Optional[bytes]:
         """
         Convert text to speech using ElevenLabs.
@@ -394,8 +335,8 @@ class VoiceProcessor:
             if not should_respond:
                 return transcribed_text
             
-            # Generate response using RAG with voice-optimized length
-            response_text = await self._generate_voice_optimized_response(rag_manager, transcribed_text, message.sender_id)
+            # Generate response using RAG
+            response_text = await rag_manager.generate_response(transcribed_text, message.sender_id)
             
             # Check if response would exceed 20 seconds when spoken
             estimated_duration = self.estimate_speech_duration(response_text)

@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Daredevil Web Messenger</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 800px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.bot {
+            justify-content: flex-start;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            position: relative;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.bot .message-content {
+            background: white;
+            color: #333;
+            border: 1px solid #e1e5e9;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .message-type {
+            font-size: 0.8rem;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+
+        .input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e1e5e9;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .input-group {
+            flex: 1;
+            display: flex;
+            gap: 10px;
+        }
+
+        .text-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 25px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .text-input:focus {
+            border-color: #667eea;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .voice-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .status {
+            padding: 10px 20px;
+            background: #e3f2fd;
+            color: #1976d2;
+            text-align: center;
+            font-size: 0.9rem;
+            border-bottom: 1px solid #e1e5e9;
+        }
+
+        .status.error {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        .status.success {
+            background: #e8f5e8;
+            color: #2e7d32;
+        }
+
+        .connection-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #dc3545;
+        }
+
+        .connection-status.connected {
+            background: #28a745;
+        }
+
+        .audio-player {
+            margin-top: 10px;
+        }
+
+        .audio-player audio {
+            width: 100%;
+            border-radius: 10px;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                width: 95%;
+                height: 90vh;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .input-container {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .input-group {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Agent Daredevil</h1>
+            <p>Your AI Assistant with Voice & Text Support</p>
+            <div class="connection-status" id="connectionStatus"></div>
+        </div>
+        
+        <div class="status" id="status"></div>
+        
+        <div class="chat-container">
+            <div class="messages" id="messages">
+                <div class="message bot">
+                    <div class="message-content">
+                        <div class="message-type">🤖 System</div>
+                        Welcome! I'm Agent Daredevil. You can send me text messages or voice recordings. I'll respond accordingly!
+                    </div>
+                </div>
+            </div>
+            
+            <div class="input-container">
+                <div class="input-group">
+                    <input type="text" id="textInput" class="text-input" placeholder="Type your message here..." />
+                    <button id="sendBtn" class="btn btn-primary">Send</button>
+                </div>
+                
+                <div class="voice-controls">
+                    <input type="file" id="voiceFile" class="file-input" accept="audio/*" />
+                    <button id="voiceBtn" class="btn btn-secondary">🎤 Voice</button>
+                    <button id="wsBtn" class="btn btn-secondary">🔌 WebSocket</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class AgentDaredevilClient {
+            constructor() {
+                this.userId = 'user_' + Math.random().toString(36).substr(2, 9);
+                this.sessionId = null;
+                this.websocket = null;
+                this.isWebSocketMode = false;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.updateStatus('Ready to chat!', 'success');
+            }
+            
+            initializeElements() {
+                this.messagesContainer = document.getElementById('messages');
+                this.textInput = document.getElementById('textInput');
+                this.sendBtn = document.getElementById('sendBtn');
+                this.voiceBtn = document.getElementById('voiceBtn');
+                this.voiceFile = document.getElementById('voiceFile');
+                this.wsBtn = document.getElementById('wsBtn');
+                this.status = document.getElementById('status');
+                this.connectionStatus = document.getElementById('connectionStatus');
+            }
+            
+            setupEventListeners() {
+                this.sendBtn.addEventListener('click', () => this.sendTextMessage());
+                this.textInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.sendTextMessage();
+                    }
+                });
+                
+                this.voiceBtn.addEventListener('click', () => this.voiceFile.click());
+                this.voiceFile.addEventListener('change', (e) => this.sendVoiceMessage(e.target.files[0]));
+                
+                this.wsBtn.addEventListener('click', () => this.toggleWebSocket());
+            }
+            
+            updateStatus(message, type = 'info') {
+                this.status.textContent = message;
+                this.status.className = `status ${type}`;
+                
+                if (type === 'success' || type === 'error') {
+                    setTimeout(() => {
+                        this.status.textContent = '';
+                        this.status.className = 'status';
+                    }, 3000);
+                }
+            }
+            
+            addMessage(content, isUser = false, messageType = 'text', audioUrl = null) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+                
+                const messageContent = document.createElement('div');
+                messageContent.className = 'message-content';
+                
+                const typeDiv = document.createElement('div');
+                typeDiv.className = 'message-type';
+                typeDiv.textContent = isUser ? '👤 You' : '🤖 Agent Daredevil';
+                if (messageType === 'voice') {
+                    typeDiv.textContent += ' 🎤';
+                }
+                
+                messageContent.appendChild(typeDiv);
+                messageContent.appendChild(document.createTextNode(content));
+                
+                if (audioUrl) {
+                    const audioDiv = document.createElement('div');
+                    audioDiv.className = 'audio-player';
+                    const audio = document.createElement('audio');
+                    audio.controls = true;
+                    audio.src = audioUrl;
+                    audioDiv.appendChild(audio);
+                    messageContent.appendChild(audioDiv);
+                }
+                
+                messageDiv.appendChild(messageContent);
+                this.messagesContainer.appendChild(messageDiv);
+                
+                // Scroll to bottom
+                this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+            }
+            
+            async sendTextMessage() {
+                const message = this.textInput.value.trim();
+                if (!message) return;
+                
+                this.addMessage(message, true);
+                this.textInput.value = '';
+                this.sendBtn.disabled = true;
+                
+                try {
+                    if (this.isWebSocketMode && this.websocket) {
+                        await this.sendWebSocketMessage(message, 'text');
+                    } else {
+                        await this.sendRESTTextMessage(message);
+                    }
+                } catch (error) {
+                    console.error('Error sending message:', error);
+                    this.addMessage('Sorry, there was an error sending your message.', false);
+                    this.updateStatus('Error sending message', 'error');
+                } finally {
+                    this.sendBtn.disabled = false;
+                }
+            }
+            
+            async sendRESTTextMessage(message) {
+                const response = await fetch('/api/message/text', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        user_id: this.userId,
+                        session_id: this.sessionId
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                this.sessionId = data.session_id;
+                this.addMessage(data.message, false, 'text');
+            }
+            
+            async sendVoiceMessage(file) {
+                if (!file) return;
+                
+                this.updateStatus('Processing voice message...', 'info');
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('user_id', this.userId);
+                if (this.sessionId) {
+                    formData.append('session_id', this.sessionId);
+                }
+                
+                try {
+                    const response = await fetch('/api/message/voice', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    this.sessionId = data.session_id;
+                    
+                    // Add transcription message
+                    this.addMessage(`🎤 I heard: "${data.transcription}"`, false, 'voice');
+                    
+                    // Add text response
+                    this.addMessage(data.text_response, false, 'text');
+                    
+                    // Add voice response if available
+                    if (data.voice_response_available && data.voice_file_path) {
+                        const audioUrl = `/api/voice/${encodeURIComponent(data.voice_file_path)}`;
+                        this.addMessage('🎵 Voice response:', false, 'voice', audioUrl);
+                    }
+                    
+                    this.updateStatus('Voice message processed successfully!', 'success');
+                    
+                } catch (error) {
+                    console.error('Error sending voice message:', error);
+                    this.addMessage('Sorry, there was an error processing your voice message.', false);
+                    this.updateStatus('Error processing voice message', 'error');
+                }
+            }
+            
+            async sendWebSocketMessage(message, type) {
+                if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+                    throw new Error('WebSocket not connected');
+                }
+                
+                const messageData = {
+                    type: type,
+                    content: message,
+                    user_id: this.userId,
+                    session_id: this.sessionId
+                };
+                
+                this.websocket.send(JSON.stringify(messageData));
+            }
+            
+            toggleWebSocket() {
+                if (this.isWebSocketMode) {
+                    this.disconnectWebSocket();
+                } else {
+                    this.connectWebSocket();
+                }
+            }
+            
+            connectWebSocket() {
+                try {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws/${this.userId}`;
+                    
+                    this.websocket = new WebSocket(wsUrl);
+                    
+                    this.websocket.onopen = () => {
+                        this.isWebSocketMode = true;
+                        this.wsBtn.textContent = '🔌 Disconnect';
+                        this.wsBtn.className = 'btn btn-primary';
+                        this.connectionStatus.classList.add('connected');
+                        this.updateStatus('WebSocket connected!', 'success');
+                    };
+                    
+                    this.websocket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        this.sessionId = data.session_id;
+                        this.addMessage(data.content, false, data.type);
+                    };
+                    
+                    this.websocket.onclose = () => {
+                        this.isWebSocketMode = false;
+                        this.wsBtn.textContent = '🔌 WebSocket';
+                        this.wsBtn.className = 'btn btn-secondary';
+                        this.connectionStatus.classList.remove('connected');
+                        this.updateStatus('WebSocket disconnected', 'error');
+                    };
+                    
+                    this.websocket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.updateStatus('WebSocket connection error', 'error');
+                    };
+                    
+                } catch (error) {
+                    console.error('Error connecting WebSocket:', error);
+                    this.updateStatus('Error connecting WebSocket', 'error');
+                }
+            }
+            
+            disconnectWebSocket() {
+                if (this.websocket) {
+                    this.websocket.close();
+                }
+            }
+        }
+        
+        // Initialize the client when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new AgentDaredevilClient();
+        });
+    </script>
+</body>
+</html>

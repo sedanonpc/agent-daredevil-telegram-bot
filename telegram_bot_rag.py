@@ -573,42 +573,42 @@ class AgentDaredevilBot:
                     if transcribed_text:
                         logger.info(f"Voice message processed successfully: {transcribed_text[:50]}...")
                     
-            return
-        
-            # Handle text messages
-            if event.raw_text:
-                message_text = event.raw_text.strip()
-                is_group = event.is_group
-                chat_type = "group" if is_group else "private"
-                logger.info(f"Processing text message from user {user_id} in {chat_type} chat: {message_text[:50]}...")
+                    return
                 
-                # For group chats, check if bot should respond to text messages
-                if is_group:
-                    # Check if this is a reply to the bot's message
-                    is_reply_to_bot = await self._is_reply_to_bot(event.message)
+                # Handle text messages
+                if event.raw_text:
+                    message_text = event.raw_text.strip()
+                    is_group = event.is_group
+                    chat_type = "group" if is_group else "private"
+                    logger.info(f"Processing text message from user {user_id} in {chat_type} chat: {message_text[:50]}...")
                     
-                    if is_reply_to_bot:
-                        logger.info("Text message is a reply to bot - responding automatically")
-                        should_respond = True
+                    # For group chats, check if bot should respond to text messages
+                    if is_group:
+                        # Check if this is a reply to the bot's message
+                        is_reply_to_bot = await self._is_reply_to_bot(event.message)
+                        
+                        if is_reply_to_bot:
+                            logger.info("Text message is a reply to bot - responding automatically")
+                            should_respond = True
+                        else:
+                            # Check for trigger keywords as before
+                            should_respond = self._should_respond_to_group_message(message_text)
+                        
+                        if not should_respond:
+                            logger.info("Group text message doesn't contain trigger keywords and is not a reply to bot, ignoring")
+                            return
                     else:
-                        # Check for trigger keywords as before
-                        should_respond = self._should_respond_to_group_message(message_text)
+                        should_respond = True
                     
-                    if not should_respond:
-                        logger.info("Group text message doesn't contain trigger keywords and is not a reply to bot, ignoring")
-                        return
-                else:
-                    should_respond = True
-                
-                # Show typing indicator
-                async with self.client.action(event.chat_id, 'typing'):
-                    # Generate response
-                    response = await self.generate_response(message_text, user_id)
+                    # Show typing indicator
+                    async with self.client.action(event.chat_id, 'typing'):
+                        # Generate response
+                        response = await self.generate_response(message_text, user_id)
+                        
+                        # Send response
+                        await event.respond(response)
                     
-                    # Send response
-                    await event.respond(response)
-                
-                logger.info(f"Response sent to user {user_id} in {chat_type} chat")
+                    logger.info(f"Response sent to user {user_id} in {chat_type} chat")
                 
             except Exception as e:
                 logger.error(f"Error handling message: {e}")
