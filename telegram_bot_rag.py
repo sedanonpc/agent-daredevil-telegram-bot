@@ -623,8 +623,17 @@ class AgentDaredevilBot:
             # Setup event handlers
             await self.setup_handlers()
             
-            # Start the client
-            await self.client.start(phone=self.config['telegram_phone_number'])
+            # Start the client with non-interactive authentication
+            try:
+                await self.client.start(phone=self.config['telegram_phone_number'])
+            except Exception as e:
+                if "EOF when reading a line" in str(e) or "input" in str(e).lower():
+                    logger.error("❌ Authentication failed: No interactive terminal available in Docker")
+                    logger.error("💡 Please ensure your session file is valid and authenticated locally first")
+                    logger.error("💡 Run the bot locally once to create/update the session file, then deploy")
+                    raise Exception("Telegram authentication requires interactive session setup")
+                else:
+                    raise e
             
             # Get bot info
             me = await self.client.get_me()

@@ -62,8 +62,8 @@ chroma_db/
 memory.db
 basketball_crawler.db
 
-# Session files (will be mounted as volumes)
-*.session
+# Session files - KEEP THESE for authentication
+# *.session
 
 # Environment files (will be passed as environment variables)
 .env
