@@ -667,6 +667,14 @@ class AgentDaredevilBot:
 async def main():
     """Main function to run the bot."""
     try:
+        # Start health server in background thread for Railway
+        import threading
+        from health_server import start_health_server
+        
+        health_thread = threading.Thread(target=start_health_server, daemon=True)
+        health_thread.start()
+        logger.info("🏥 Health server started on port 8080")
+        
         bot = AgentDaredevilBot()
         await bot.start()
     except KeyboardInterrupt:
