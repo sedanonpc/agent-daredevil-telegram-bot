@@ -671,10 +671,17 @@ async def main():
         import threading
         from health_server import start_health_server
         
+        logger.info("🚀 Starting Agent Daredevil Bot...")
+        
+        # Start health server first
         health_thread = threading.Thread(target=start_health_server, daemon=True)
         health_thread.start()
-        logger.info("🏥 Health server started on port 8080")
         
+        # Give health server a moment to start
+        await asyncio.sleep(1)
+        logger.info("🏥 Health server started in background")
+        
+        # Start the main bot
         bot = AgentDaredevilBot()
         await bot.start()
     except KeyboardInterrupt:
