@@ -620,33 +620,23 @@ class AgentDaredevilBot:
         try:
             logger.info("Starting Agent Daredevil Telegram Bot...")
             
-            # Start the client with non-interactive authentication
-            try:
-                await self.client.start(phone=self.config['telegram_phone_number'])
-            except Exception as e:
-                if "EOF when reading a line" in str(e) or "input" in str(e).lower():
-                    logger.error("❌ Authentication failed: No interactive terminal available in Docker")
-                    logger.error("💡 Solution: Use Railway's environment variables for authentication")
-                    logger.error("💡 Add TELEGRAM_BOT_TOKEN to Railway variables if using bot token")
-                    logger.error("💡 Or ensure session file is properly authenticated locally first")
-                    
-                    # Check if we have a bot token as alternative
-                    bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-                    if bot_token:
-                        logger.info("🤖 Bot token found! Switching to bot authentication...")
-                        # Create a new client with bot token
-                        from telethon import TelegramClient
-                        self.client = TelegramClient(
-                            'bot_session',
-                            self.config['telegram_api_id'],
-                            self.config['telegram_api_hash']
-                        )
-                        await self.client.start(bot_token=bot_token)
-                        logger.info("✅ Bot authentication successful!")
-                    else:
+            # Prefer bot-token auth if provided to avoid triggering SMS codes
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            if bot_token:
+                logger.info("🤖 Bot token found. Using bot authentication (no phone code will be requested)...")
+                await self.client.start(bot_token=bot_token)
+                logger.info("✅ Bot authentication successful!")
+            else:
+                # Fallback to user-phone session (will prompt for code if not authenticated locally)
+                try:
+                    await self.client.start(phone=self.config['telegram_phone_number'])
+                except Exception as e:
+                    if "EOF when reading a line" in str(e) or "input" in str(e).lower():
+                        logger.error("❌ Authentication failed: No interactive terminal available in Docker")
+                        logger.error("💡 Either set TELEGRAM_BOT_TOKEN or authenticate the session locally and redeploy")
                         raise Exception("Telegram authentication requires interactive session setup or bot token")
-                else:
-                    raise e
+                    else:
+                        raise e
             
             # Register handlers on the active client (must be after .start())
             await self.setup_handlers()
