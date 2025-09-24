@@ -620,9 +620,6 @@ class AgentDaredevilBot:
         try:
             logger.info("Starting Agent Daredevil Telegram Bot...")
             
-            # Setup event handlers
-            await self.setup_handlers()
-            
             # Start the client with non-interactive authentication
             try:
                 await self.client.start(phone=self.config['telegram_phone_number'])
@@ -651,6 +648,9 @@ class AgentDaredevilBot:
                 else:
                     raise e
             
+            # Register handlers on the active client (must be after .start())
+            await self.setup_handlers()
+
             # Get bot info
             me = await self.client.get_me()
             logger.info(f"✅ Bot started successfully! Logged in as: {me.first_name}")
@@ -666,20 +666,23 @@ class AgentDaredevilBot:
             
             logger.info("🚀 Agent Daredevil is ready to chat!")
             
-            # Debug: List all dialogs (chats) the bot is part of
+            # Debug: List dialogs only for user accounts (bots cannot call get_dialogs)
             try:
-                logger.info("📋 Checking dialogs (chats) the bot is part of...")
-                dialogs = await self.client.get_dialogs(limit=50)
-                group_count = 0
-                for dialog in dialogs:
-                    if dialog.is_group:
-                        group_count += 1
-                        logger.info(f"📱 Group: {dialog.title} (ID: {dialog.id})")
-                    elif dialog.is_user:
-                        logger.info(f"👤 User: {dialog.title} (ID: {dialog.id})")
-                logger.info(f"📊 Total groups: {group_count}")
+                if not me.bot:
+                    logger.info("📋 Checking dialogs (chats) the account is part of...")
+                    dialogs = await self.client.get_dialogs(limit=50)
+                    group_count = 0
+                    for dialog in dialogs:
+                        if dialog.is_group:
+                            group_count += 1
+                            logger.info(f"📱 Group: {dialog.title} (ID: {dialog.id})")
+                        elif dialog.is_user:
+                            logger.info(f"👤 User: {dialog.title} (ID: {dialog.id})")
+                    logger.info(f"📊 Total groups: {group_count}")
+                else:
+                    logger.info("🤖 Running as bot: skipping get_dialogs (restricted for bots)")
             except Exception as e:
-                logger.error(f"Error listing dialogs: {e}")
+                logger.error(f"Dialog check skipped: {e}")
             
             # Keep running
             await self.client.run_until_disconnected()
