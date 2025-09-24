@@ -40,6 +40,7 @@ if sys.platform.startswith('win'):
 
 # Core imports
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeAudio
 
 # RAG and knowledge imports
@@ -630,29 +631,39 @@ class AgentDaredevilBot:
                 await self.client.start(bot_token=bot_token)
                 logger.info("✅ Bot authentication successful!")
             else:
-                # User mode: materialize session from env if provided
-                session_b64 = os.getenv('TELEGRAM_SESSION_B64')
-                session_path = Path('daredevil_session.session')
-                if session_b64 and not session_path.exists():
+                # User mode: prefer compact StringSession if provided
+                string_session = os.getenv('TELEGRAM_STRING_SESSION')
+                if string_session:
+                    logger.info("👤 Using TELEGRAM_STRING_SESSION for user authentication...")
+                    self.client = TelegramClient(StringSession(string_session), self.config['telegram_api_id'], self.config['telegram_api_hash'])
+                    await self.client.connect()
+                    if not await self.client.is_user_authorized():
+                        raise Exception("Provided TELEGRAM_STRING_SESSION is not authorized")
+                    logger.info("✅ User StringSession authentication successful!")
+                else:
+                    # Materialize binary .session from base64 if provided
+                    session_b64 = os.getenv('TELEGRAM_SESSION_B64')
+                    session_path = Path('daredevil_session.session')
+                    if session_b64 and not session_path.exists():
+                        try:
+                            import base64
+                            decoded = base64.b64decode(session_b64)
+                            session_path.write_bytes(decoded)
+                            logger.info("📄 Wrote session file from TELEGRAM_SESSION_B64")
+                        except Exception as e:
+                            logger.error(f"Failed to write session file from TELEGRAM_SESSION_B64: {e}")
+                    
+                    # Start with existing phone-based session (must already be authenticated)
                     try:
-                        import base64
-                        decoded = base64.b64decode(session_b64)
-                        session_path.write_bytes(decoded)
-                        logger.info("📄 Wrote session file from TELEGRAM_SESSION_B64")
+                        await self.client.start(phone=self.config['telegram_phone_number'])
+                        logger.info("✅ User session authentication successful!")
                     except Exception as e:
-                        logger.error(f"Failed to write session file from TELEGRAM_SESSION_B64: {e}")
-                
-                # Start with phone-based session (must already be authenticated)
-                try:
-                    await self.client.start(phone=self.config['telegram_phone_number'])
-                    logger.info("✅ User session authentication successful!")
-                except Exception as e:
-                    if "EOF when reading a line" in str(e) or "input" in str(e).lower():
-                        logger.error("❌ Interactive authentication blocked in Docker")
-                        logger.error("💡 Provide TELEGRAM_SESSION_B64 (base64 of your .session) in Railway and redeploy")
-                        raise Exception("User-mode auth requires pre-authenticated session (TELEGRAM_SESSION_B64)")
-                    else:
-                        raise e
+                        if "EOF when reading a line" in str(e) or "input" in str(e).lower():
+                            logger.error("❌ Interactive authentication blocked in Docker")
+                            logger.error("💡 Provide TELEGRAM_STRING_SESSION (recommended) or TELEGRAM_SESSION_B64 and redeploy")
+                            raise Exception("User-mode auth requires pre-authenticated session (StringSession or B64 session)")
+                        else:
+                            raise e
             
             # Register handlers on the active client (must be after .start())
             await self.setup_handlers()
