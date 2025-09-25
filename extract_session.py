@@ -10,7 +10,6 @@ Usage:
 """
 
 import os
-import sqlite3
 import base64
 from pathlib import Path
 from telethon.sessions import StringSession
@@ -34,47 +33,16 @@ def extract_string_session():
         return None
 
 def extract_session_data_b64():
-    """Extract session DB as base64 (fallback)"""
+    """Encode the entire .session file as base64 (fallback)"""
     session_file = "daredevil_session.session"
-    
     if not os.path.exists(session_file):
         print(f"❌ Session file not found: {session_file}")
         return None
-    
     try:
-        # Connect to the session database
-        conn = sqlite3.connect(session_file)
-        cursor = conn.cursor()
-        
-        # Get session data
-        cursor.execute("SELECT * FROM sessions LIMIT 1")
-        session_data = cursor.fetchone()
-        
-        if not session_data:
-            print("❌ No session data found in the session file")
-            return None
-        
-        # Extract the auth_key (this is what we need for authentication)
-    auth_key = session_data[2] if len(session_data) > 2 else None
-        
-        if auth_key:
-            # Convert to base64 for environment variable
-            auth_key_b64 = base64.b64encode(auth_key).decode('utf-8')
-            
-            print("✅ Session data extracted successfully!")
-            print("\n🔐 Add these environment variables to Railway:")
-            print("=" * 50)
-            print(f"TELEGRAM_AUTH_KEY={auth_key_b64}")
-            print("=" * 50)
-            
-            conn.close()
-            return auth_key_b64
-        else:
-            print("❌ Could not extract auth key from session file")
-            return None
-            
+        data = Path(session_file).read_bytes()
+        return base64.b64encode(data).decode("utf-8")
     except Exception as e:
-        print(f"❌ Error extracting session data: {e}")
+        print(f"❌ Error reading session file: {e}")
         return None
 
 if __name__ == "__main__":

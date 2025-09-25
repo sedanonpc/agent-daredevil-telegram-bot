@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "python telegram_bot_rag.py",
+    "startCommand": "python launch_web_messenger.py",
     "runtime": "V2",
     "numReplicas": 1,
     "sleepApplication": false,

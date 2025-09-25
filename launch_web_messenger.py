@@ -54,12 +54,14 @@ def main():
         logger.info("🔌 WebSocket endpoint available at ws://localhost:8000/ws/{user_id}")
         logger.info("📚 API documentation available at http://localhost:8000/docs")
         
-        # Run the server
+        # Run the server (bind to Railway's PORT if provided)
+        port = int(os.environ.get("PORT", os.environ.get("HEALTH_CHECK_PORT", "8000")))
+        reload = os.environ.get("RELOAD", "False").lower() == "true"
         uvicorn.run(
             app,
             host="0.0.0.0",
-            port=8000,
-            reload=True,
+            port=port,
+            reload=reload,
             log_level="info"
         )
         
