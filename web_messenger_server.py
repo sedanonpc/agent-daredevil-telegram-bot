@@ -141,8 +141,8 @@ class WebMessengerBot:
         # User session tracking (username support)
         self.user_sessions: Dict[str, Dict[str, Any]] = {}
         
-        # Voice processing enabled check
-        self.voice_enabled = voice_processor.is_enabled()
+        # Voice processing disabled for API-only deployment
+        self.voice_enabled = False  # Disabled for frontend TTS optimization
         
         # WebSocket connection manager
         self.active_connections: Dict[str, WebSocket] = {}
@@ -502,8 +502,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize bot
-bot = WebMessengerBot()
+# Initialize bot with error handling
+try:
+    bot = WebMessengerBot()
+    logger.info("✅ WebMessengerBot initialized successfully")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize WebMessengerBot: {e}")
+    logger.error("Service will start with limited functionality")
+    bot = None
 
 # Serve static files (for the test frontend)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -516,13 +522,34 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "voice_enabled": bot.voice_enabled,
-        "rag_enabled": bot.config['use_rag'],
-        "memory_enabled": bot.config['use_memory'],
-        "llm_provider": bot.llm_provider.get_model_name()
-    }
+    try:
+        # Simple health check that doesn't depend on bot initialization
+        health_status = {
+            "status": "healthy",
+            "service": "web-messenger",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Add bot status if available
+        if bot is not None:
+            health_status.update({
+                "bot_initialized": True,
+                "voice_enabled": getattr(bot, 'voice_enabled', False),
+                "rag_enabled": bot.config.get('use_rag', False),
+                "memory_enabled": bot.config.get('use_memory', False),
+                "llm_provider": bot.llm_provider.get_model_name() if hasattr(bot, 'llm_provider') else "unknown"
+            })
+        else:
+            health_status["bot_initialized"] = False
+            
+        return health_status
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 @app.post("/chat")
 async def chat_endpoint(
@@ -540,6 +567,13 @@ async def chat_endpoint(
     try:
         logger.info(f"Processing {type} message from user {username} ({userId}): {message[:50]}...")
         
+        # Check if bot is initialized
+        if bot is None:
+            return {
+                "error": "Bot not initialized. Please check environment variables and try again.",
+                "status": "error"
+            }
+        
         # Track user session with username
         if userId not in bot.user_sessions:
             bot.user_sessions[userId] = {
@@ -556,7 +590,7 @@ async def chat_endpoint(
         if type not in ['text', 'voice']:
             raise HTTPException(status_code=400, detail="Type must be 'text' or 'voice'")
         
-        # For voice messages, process audio if provided
+        # For voice messages, process audio if provided (transcription only)
         if type == 'voice':
             if not audio:
                 raise HTTPException(status_code=400, detail="Audio file required for voice messages")
@@ -568,42 +602,18 @@ async def chat_endpoint(
             # Read audio data
             audio_data = await audio.read()
             
-            # Process voice message
+            # Process voice message (transcription only)
             transcribed_text, response_text = await bot.process_voice_message(audio_data, userId)
             
             if not transcribed_text:
                 raise HTTPException(status_code=400, detail="Could not transcribe voice message")
             
-            # Generate voice response if possible
-            voice_audio = None
-            if response_text and bot.voice_enabled:
-                voice_audio = await voice_processor.text_to_speech(response_text)
-            
-            # Prepare response
+            # Return text-only response (frontend handles TTS)
             response_data = {
                 "message": response_text,
-                "type": "voice",
-                "audioUrl": None
+                "type": "text",  # Changed to text for frontend TTS
+                "audioUrl": None  # No audio files generated
             }
-            
-            # If we have voice audio, save it and provide URL
-            if voice_audio:
-                import tempfile
-                import os
-                
-                # Create a unique filename
-                audio_filename = f"voice_response_{userId}_{uuid.uuid4().hex[:8]}.mp3"
-                audio_path = os.path.join("temp_voice_files", audio_filename)
-                
-                # Ensure directory exists
-                os.makedirs("temp_voice_files", exist_ok=True)
-                
-                # Save audio file
-                with open(audio_path, 'wb') as f:
-                    f.write(voice_audio)
-                
-                # Provide URL for the audio file
-                response_data["audioUrl"] = f"/api/voice/{audio_filename}"
             
             return response_data
         
@@ -704,24 +714,8 @@ async def send_voice_message(
 
 @app.get("/api/voice/{filename}")
 async def get_voice_file(filename: str):
-    """Serve generated voice files."""
-    try:
-        # Security: Only allow files from temp_voice_files directory
-        if '..' in filename or '/' in filename or '\\' in filename:
-            raise HTTPException(status_code=400, detail="Invalid filename")
-        
-        file_path = os.path.join("temp_voice_files", filename)
-        
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Voice file not found")
-        
-        return FileResponse(file_path, media_type="audio/mpeg")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error serving voice file: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Voice files disabled for API-only deployment."""
+    raise HTTPException(status_code=410, detail="Voice files disabled - use frontend TTS instead")
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
@@ -730,14 +724,17 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 
 @app.get("/api/stats")
 async def get_stats():
-    """Get bot statistics."""
+    """Get bot statistics for API-only deployment."""
     try:
         stats = {
-            "voice_enabled": bot.voice_enabled,
+            "deployment_type": "API-Only",
+            "voice_enabled": False,  # Always false for API-only
+            "frontend_tts": True,    # Frontend handles TTS
             "rag_enabled": bot.config['use_rag'],
             "memory_enabled": bot.config['use_memory'],
             "llm_provider": bot.llm_provider.get_model_name(),
-            "active_connections": len(bot.active_connections)
+            "active_connections": len(bot.active_connections),
+            "optimization": "Frontend TTS, Backend Text-Only"
         }
         
         if bot.config['use_rag'] and bot.vectorstore:

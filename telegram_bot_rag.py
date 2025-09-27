@@ -40,7 +40,6 @@ if sys.platform.startswith('win'):
 
 # Core imports
 from telethon import TelegramClient, events
-from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeAudio
 
 # RAG and knowledge imports
@@ -121,7 +120,6 @@ class AgentDaredevilBot:
             'telegram_api_id': int(os.getenv('TELEGRAM_API_ID', 0)),
             'telegram_api_hash': os.getenv('TELEGRAM_API_HASH', ''),
             'telegram_phone_number': os.getenv('TELEGRAM_PHONE_NUMBER', ''),
-            'auth_mode': os.getenv('TELEGRAM_AUTH_MODE', 'user').lower(),  # 'user' or 'bot'
             'llm_provider': os.getenv('LLM_PROVIDER', 'openai').lower(),
             'chroma_db_path': os.getenv('CHROMA_DB_PATH', './chroma_db'),
             'character_card_path': os.getenv('CHARACTER_CARD_PATH', './cryptodevil.character.json'),
@@ -623,47 +621,22 @@ class AgentDaredevilBot:
             logger.info("Starting Agent Daredevil Telegram Bot...")
             
             # Prefer bot-token auth if provided to avoid triggering SMS codes
-            if self.config['auth_mode'] == 'bot':
-                bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-                if not bot_token:
-                    raise ValueError("TELEGRAM_AUTH_MODE=bot but TELEGRAM_BOT_TOKEN is not set")
-                logger.info("🤖 TELEGRAM_AUTH_MODE=bot. Using bot authentication...")
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            if bot_token:
+                logger.info("🤖 Bot token found. Using bot authentication (no phone code will be requested)...")
                 await self.client.start(bot_token=bot_token)
                 logger.info("✅ Bot authentication successful!")
             else:
-                # User mode: prefer compact StringSession if provided
-                string_session = os.getenv('TELEGRAM_STRING_SESSION')
-                if string_session:
-                    logger.info("👤 Using TELEGRAM_STRING_SESSION for user authentication...")
-                    self.client = TelegramClient(StringSession(string_session), self.config['telegram_api_id'], self.config['telegram_api_hash'])
-                    await self.client.connect()
-                    if not await self.client.is_user_authorized():
-                        raise Exception("Provided TELEGRAM_STRING_SESSION is not authorized")
-                    logger.info("✅ User StringSession authentication successful!")
-                else:
-                    # Materialize binary .session from base64 if provided
-                    session_b64 = os.getenv('TELEGRAM_SESSION_B64')
-                    session_path = Path('daredevil_session.session')
-                    if session_b64 and not session_path.exists():
-                        try:
-                            import base64
-                            decoded = base64.b64decode(session_b64)
-                            session_path.write_bytes(decoded)
-                            logger.info("📄 Wrote session file from TELEGRAM_SESSION_B64")
-                        except Exception as e:
-                            logger.error(f"Failed to write session file from TELEGRAM_SESSION_B64: {e}")
-                    
-                    # Start with existing phone-based session (must already be authenticated)
-                    try:
-                        await self.client.start(phone=self.config['telegram_phone_number'])
-                        logger.info("✅ User session authentication successful!")
-                    except Exception as e:
-                        if "EOF when reading a line" in str(e) or "input" in str(e).lower():
-                            logger.error("❌ Interactive authentication blocked in Docker")
-                            logger.error("💡 Provide TELEGRAM_STRING_SESSION (recommended) or TELEGRAM_SESSION_B64 and redeploy")
-                            raise Exception("User-mode auth requires pre-authenticated session (StringSession or B64 session)")
-                        else:
-                            raise e
+                # Fallback to user-phone session (will prompt for code if not authenticated locally)
+                try:
+                    await self.client.start(phone=self.config['telegram_phone_number'])
+                except Exception as e:
+                    if "EOF when reading a line" in str(e) or "input" in str(e).lower():
+                        logger.error("❌ Authentication failed: No interactive terminal available in Docker")
+                        logger.error("💡 Either set TELEGRAM_BOT_TOKEN or authenticate the session locally and redeploy")
+                        raise Exception("Telegram authentication requires interactive session setup or bot token")
+                    else:
+                        raise e
             
             # Register handlers on the active client (must be after .start())
             await self.setup_handlers()

@@ -386,10 +386,8 @@ class VoiceProcessor:
     
     def is_enabled(self) -> bool:
         """Check if voice features are enabled."""
-        return (self.use_voice_features and 
-                bool(os.getenv('ELEVENLABS_API_KEY')) and 
-                bool(os.getenv('OPENAI_API_KEY')) and
-                self.elevenlabs_working)
+        # Disabled for API-only deployment (frontend handles TTS)
+        return False
 
 # Global instance
 voice_processor = VoiceProcessor()

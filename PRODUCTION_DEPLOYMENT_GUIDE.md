@@ -1,283 +1,283 @@
-# 🚀 Agent Daredevil - Production Deployment Guide
+# 🎯 Agent Daredevil - Production Deployment Guide
 
 ## Overview
 
-This guide covers production deployment strategies for the Agent Daredevil Telegram Bot, including both Railway's native deployment and Docker containerization approaches.
+This guide will help you deploy the Agent Daredevil Telegram Bot to Railway using Docker. The deployment includes:
 
-## 🎯 Deployment Options
+1. **Telegram Bot** - Main bot with RAG, memory, and character features
+2. **LLM Services** - Multi-provider support (OpenAI, Gemini, Vertex AI) with voice processing  
+3. **Web Endpoints** - FastAPI web messenger server with health checks
 
-### Option 1: Current Railway Setup (Recommended for Simplicity)
-**Status**: ✅ Already configured and working
-**Best for**: Quick deployment, minimal configuration
+## Prerequisites
 
-```bash
-# Current setup uses Railway's RAILPACK builder
-# Simply push to your connected repository
-git push origin main
-```
+### Required Tools
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (for local testing)
+- [Railway CLI](https://docs.railway.app/develop/cli) (`npm install -g @railway/cli`)
+- [Git](https://git-scm.com/) (for version control)
 
-### Option 2: Docker on Railway (Recommended for Production)
-**Status**: ✅ Ready to deploy
-**Best for**: Environment consistency, advanced configuration
+### Required Accounts & API Keys
+- [Telegram API](https://my.telegram.org/apps) - API ID and Hash
+- [OpenAI API](https://platform.openai.com/api-keys) - API Key
+- [ElevenLabs](https://elevenlabs.io/) - API Key (for voice features)
+- [Railway Account](https://railway.app/) - Free tier available
 
-```bash
-# Switch to Docker deployment
-cp railway.docker.json railway.json
-git add railway.json Dockerfile .dockerignore
-git commit -m "Add Docker support for production deployment"
-git push origin main
-```
+## Quick Start
 
-### Option 3: Local Docker Development
-**Status**: ✅ Ready to use
-**Best for**: Local testing, development
+### 1. Environment Setup
 
 ```bash
-# Start all services
-docker-compose up -d
+# Copy the production environment template
+cp env.production.example .env
 
-# Start only the bot
-docker-compose up telegram-bot
-
-# Start with web interfaces
-docker-compose --profile web-interfaces up -d
+# Edit .env with your actual API keys and configuration
+# Required minimum configuration:
+# - TELEGRAM_API_ID
+# - TELEGRAM_API_HASH  
+# - TELEGRAM_PHONE_NUMBER
+# - OPENAI_API_KEY
 ```
 
-## 🔧 Production Configuration
+### 2. Local Testing (Optional)
+
+```bash
+# Start Docker Desktop first, then:
+
+# Build and test locally
+docker build -t agent-daredevil:latest .
+docker run -d --name test-bot --env-file .env -p 8000:8000 agent-daredevil:latest
+
+# Test health endpoint
+curl http://localhost:8000/health
+
+# Clean up
+docker stop test-bot && docker rm test-bot
+```
+
+### 3. Deploy to Railway
+
+```bash
+# Login to Railway
+railway login
+
+# Deploy (automated script)
+# Windows:
+deploy-production.bat
+
+# Linux/Mac:
+./deploy-production.sh
+
+# Or manual deployment:
+railway up --detach
+```
+
+## Configuration
 
 ### Environment Variables
 
-Ensure these are set in Railway's environment variables:
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `TELEGRAM_API_ID` | ✅ | Telegram API ID | `12345678` |
+| `TELEGRAM_API_HASH` | ✅ | Telegram API Hash | `abcdef1234567890` |
+| `TELEGRAM_PHONE_NUMBER` | ✅ | Your phone number | `+1234567890` |
+| `OPENAI_API_KEY` | ✅ | OpenAI API Key | `sk-...` |
+| `LLM_PROVIDER` | ❌ | LLM provider (openai/gemini/vertex_ai) | `openai` |
+| `ELEVENLABS_API_KEY` | ❌ | ElevenLabs API Key | `...` |
+| `USE_VOICE_FEATURES` | ❌ | Enable voice processing | `True` |
+| `USE_RAG` | ❌ | Enable RAG features | `True` |
+| `USE_MEMORY` | ❌ | Enable session memory | `True` |
 
+### Railway Configuration
+
+The `railway.json` file is already configured for optimal deployment:
+
+```json
+{
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "python launch_web_messenger.py",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 30,
+    "healthcheckInterval": 60,
+    "healthcheckStartPeriod": 120
+  }
+}
+```
+
+## Service Architecture
+
+### Primary Service: Web Messenger
+- **Port**: 8000 (Railway auto-assigned)
+- **Health Check**: `/health`
+- **Features**: REST API, WebSocket, Voice processing
+- **Command**: `python launch_web_messenger.py`
+
+### Optional Services (Development)
+- **RAG Manager**: Port 8501 (Streamlit interface)
+- **Knowledge Visualizer**: Port 8502 (Streamlit interface)
+- **Telegram Bot**: Background service (separate container)
+
+## Docker Configuration
+
+### Multi-Stage Build
+- **Stage 1**: Build dependencies in optimized environment
+- **Stage 2**: Runtime with minimal dependencies
+- **Security**: Non-root user, proper permissions
+- **Size**: Optimized for production deployment
+
+### Key Features
+- Python 3.11 slim base image
+- FFmpeg for voice processing
+- ChromaDB for vector storage
+- Health checks for Railway
+- Proper logging and error handling
+
+## Monitoring & Maintenance
+
+### Health Checks
 ```bash
-# Required
-TELEGRAM_API_ID=your_api_id
-TELEGRAM_API_HASH=your_api_hash
-TELEGRAM_PHONE_NUMBER=+1234567890
-OPENAI_API_KEY=your_openai_key
+# Check service health
+curl https://your-app.railway.app/health
 
-# Optional but recommended
-LLM_PROVIDER=openai
-USE_RAG=True
-USE_MEMORY=True
-USE_VOICE_FEATURES=True
-DEBUG=False
-LOG_LEVEL=INFO
+# Expected response:
+{"status": "healthy", "service": "telegram-bot", "timestamp": "1234567890"}
 ```
 
-### Database Persistence
-
-**Railway**: Uses Railway's persistent volumes automatically
-**Docker**: Mount volumes for data persistence:
-
-```yaml
-volumes:
-  - ./data:/app/data
-  - ./logs:/app/logs
-```
-
-## 📊 Monitoring & Health Checks
-
-### Built-in Health Checks
-
-Both deployment methods include health checks:
-- **Railway**: Automatic process monitoring
-- **Docker**: Custom health check every 30 seconds
-
-### Logging
-
-Logs are automatically captured:
-- **Railway**: Available in Railway dashboard
-- **Docker**: Stored in `./logs/` directory
-
-### Key Metrics to Monitor
-
-1. **Bot Response Time**: Should be < 5 seconds
-2. **Memory Usage**: Monitor for memory leaks
-3. **Error Rate**: Should be < 1%
-4. **Uptime**: Target 99.9% availability
-
-## 🛡️ Security Best Practices
-
-### Environment Security
-
+### Logs
 ```bash
-# Use Railway's encrypted environment variables
-# Never commit API keys to repository
-# Rotate keys regularly
+# View Railway logs
+railway logs
+
+# View specific service logs
+railway logs --service your-service-name
 ```
 
-### Docker Security
-
-- ✅ Non-root user in container
-- ✅ Minimal base image (python:3.11-slim)
-- ✅ No unnecessary packages
-- ✅ Health checks enabled
-
-### API Key Management
-
+### Updates
 ```bash
-# Store in Railway environment variables
-# Use different keys for dev/staging/prod
-# Monitor API usage and costs
+# Redeploy with latest changes
+railway up --detach
+
+# Or use the deployment script
+deploy-production.bat  # Windows
+./deploy-production.sh  # Linux/Mac
 ```
 
-## 🔄 Deployment Strategies
-
-### Blue-Green Deployment (Railway)
-
-1. Create staging environment
-2. Test new version
-3. Switch production traffic
-4. Monitor and rollback if needed
-
-### Rolling Updates (Docker)
-
-```bash
-# Update image
-docker-compose pull
-docker-compose up -d
-
-# Rollback if needed
-docker-compose down
-docker-compose up -d --scale telegram-bot=0
-```
-
-## 📈 Scaling Considerations
-
-### Current Setup (Railway)
-
-- **Single instance**: Suitable for moderate usage
-- **Auto-restart**: On failure
-- **Resource limits**: Railway managed
-
-### Docker Scaling
-
-```bash
-# Scale horizontally
-docker-compose up -d --scale telegram-bot=3
-
-# Use load balancer for multiple instances
-```
-
-### Performance Optimization
-
-1. **Database**: Consider external ChromaDB for multiple instances
-2. **Memory**: Monitor and optimize session storage
-3. **API Limits**: Implement rate limiting
-4. **Caching**: Add Redis for session caching
-
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
-#### Bot Not Responding
+#### 1. Docker Build Fails
 ```bash
-# Check logs
-docker-compose logs telegram-bot
+# Check Docker is running
+docker --version
+
+# Clean build cache
+docker system prune -a
+```
+
+#### 2. Railway Deployment Fails
+```bash
+# Check Railway login
+railway whoami
 
 # Check environment variables
-docker-compose exec telegram-bot env | grep TELEGRAM
+railway variables
+
+# View deployment logs
+railway logs
 ```
 
-#### Memory Issues
+#### 3. Health Check Fails
+- Verify all required environment variables are set
+- Check that the service is binding to the correct port
+- Ensure the `/health` endpoint is accessible
+
+#### 4. Telegram Bot Not Responding
+- Verify Telegram API credentials
+- Check phone number format (+1234567890)
+- Ensure session files are properly configured
+
+### Debug Mode
 ```bash
-# Monitor memory usage
-docker stats
-
-# Check for memory leaks in logs
-docker-compose logs telegram-bot | grep -i memory
+# Enable debug logging
+DEBUG=True LOG_LEVEL=DEBUG railway up --detach
 ```
 
-#### Database Issues
-```bash
-# Check database files
-ls -la ./data/
+## Security Considerations
 
-# Verify ChromaDB
-docker-compose exec telegram-bot python -c "import chromadb; print('ChromaDB OK')"
-```
+### Environment Variables
+- Never commit `.env` files to version control
+- Use Railway's environment variable management
+- Rotate API keys regularly
 
-### Recovery Procedures
+### Container Security
+- Non-root user execution
+- Minimal base image
+- No unnecessary packages
+- Proper file permissions
 
-1. **Quick Restart**: `docker-compose restart telegram-bot`
-2. **Full Rebuild**: `docker-compose down && docker-compose up -d --build`
-3. **Data Recovery**: Restore from backup volumes
+### Network Security
+- HTTPS enforced by Railway
+- CORS properly configured
+- Rate limiting implemented
 
-## 💰 Cost Optimization
+## Performance Optimization
+
+### Resource Limits
+- **Memory**: 2GB limit, 1GB reservation
+- **CPU**: 1.0 limit, 0.5 reservation
+- **Storage**: Persistent volumes for data
+
+### Caching
+- ChromaDB vector cache
+- Session memory management
+- LLM response caching
+
+### Scaling
+- Railway auto-scaling based on traffic
+- Horizontal scaling with multiple replicas
+- Load balancing across regions
+
+## Cost Optimization
 
 ### Railway Pricing
-- **Hobby Plan**: $5/month (suitable for development)
-- **Pro Plan**: $20/month (production recommended)
-- **Team Plan**: $99/month (multiple services)
+- Free tier: $5 credit monthly
+- Pro tier: Pay-as-you-go
+- Optimize resource usage
 
-### Docker Optimization
-- **Multi-stage builds**: Reduce image size
-- **Layer caching**: Faster rebuilds
-- **Resource limits**: Prevent overuse
+### Tips
+- Use appropriate resource limits
+- Monitor usage in Railway dashboard
+- Implement proper caching
+- Optimize Docker image size
 
-## 🔮 Future Enhancements
+## Support & Resources
 
-### Planned Improvements
+### Documentation
+- [Railway Docs](https://docs.railway.app/)
+- [Docker Docs](https://docs.docker.com/)
+- [Telegram Bot API](https://core.telegram.org/bots/api)
 
-1. **Kubernetes**: For advanced orchestration
-2. **Monitoring**: Prometheus + Grafana
-3. **CI/CD**: GitHub Actions for automated deployment
-4. **Load Balancing**: Multiple bot instances
-5. **Database**: External PostgreSQL for sessions
+### Community
+- [Railway Discord](https://discord.gg/railway)
+- [Telegram Bot Community](https://t.me/BotSupport)
 
-### Migration Path
-
-```
-Current Railway → Docker Railway → Kubernetes → Multi-cloud
-```
-
-## 📋 Deployment Checklist
-
-### Pre-Deployment
-
-- [ ] Environment variables configured
-- [ ] Database backups created
-- [ ] Health checks working
-- [ ] Logging configured
-- [ ] Monitoring setup
-
-### Deployment
-
-- [ ] Choose deployment method
-- [ ] Deploy to staging first
-- [ ] Test all functionality
-- [ ] Monitor for issues
-- [ ] Deploy to production
-
-### Post-Deployment
-
-- [ ] Verify bot is responding
-- [ ] Check logs for errors
-- [ ] Monitor performance metrics
-- [ ] Update documentation
-- [ ] Schedule maintenance windows
-
-## 🆘 Support & Maintenance
-
-### Regular Maintenance
-
-- **Weekly**: Check logs and performance
-- **Monthly**: Update dependencies
-- **Quarterly**: Security audit and key rotation
-
-### Emergency Contacts
-
-- **Railway Support**: support@railway.app
-- **Telegram API**: @BotSupport
-- **OpenAI Support**: help.openai.com
+### Issues
+- Check logs first: `railway logs`
+- Verify environment variables
+- Test locally with Docker
+- Contact support if needed
 
 ---
 
-## 🎯 Recommendation
+## 🎯 Ready to Deploy?
 
-**For your current needs**: Stick with Railway's current setup for simplicity
-**For production scaling**: Use Docker deployment on Railway
-**For enterprise**: Consider Kubernetes with external databases
+1. **Set up your environment**: Copy `env.production.example` to `.env` and configure
+2. **Test locally** (optional): `docker build -t agent-daredevil:latest .`
+3. **Deploy to Railway**: `railway up --detach`
+4. **Monitor**: Check Railway dashboard and logs
+5. **Test**: Verify health endpoint and bot functionality
 
-The Docker setup provides the best foundation for future growth while maintaining Railway's deployment simplicity.
+Your Agent Daredevil bot will be live and ready to serve users! 🚀

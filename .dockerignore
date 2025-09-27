@@ -1,6 +1,12 @@
 # ===========================================
-# Docker Ignore File for Agent Daredevil Bot
+# Agent Daredevil - Docker Ignore File
 # ===========================================
+# Optimize Docker build by excluding unnecessary files
+
+# Git and version control
+.git
+.gitignore
+.gitattributes
 
 # Python cache and compiled files
 __pycache__/
@@ -23,7 +29,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # Virtual environments
 venv/
@@ -38,14 +43,7 @@ venv.bak/
 *.swp
 *.swo
 *~
-
-# OS generated files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
 # Logs and temporary files
@@ -55,73 +53,104 @@ temp_voice_files/
 *.tmp
 *.temp
 
-# Database files (will be mounted as volumes)
-*.db
-*.sqlite3
-chroma_db/
-memory.db
-basketball_crawler.db
-
-# Session files - Commented out for Railway deployment
-# Note: In production, consider using TELEGRAM_BOT_TOKEN instead
-*.session
-
-# Environment files (will be passed as environment variables)
+# Environment files (will be set via Railway)
 .env
 .env.local
 .env.development
 .env.test
 .env.production
 
-# Git
-.git/
-.gitignore
+# Database files (will be created in container)
+*.db
+*.sqlite
+*.sqlite3
+chroma_db/
+memory.db
 
-# Documentation
-README.md
+# Session files (will be mounted or created)
+*.session
+daredevil_session.session
+session_name.session
+test_session.session
+
+# Documentation and markdown
 *.md
 docs/
+README.md
+LICENSE
 
 # Test files
 test_*.py
 *_test.py
 tests/
 
-# Development scripts
-launch_*.py
-launch_*.bat
-launch_*.sh
-run.bat
-run.sh
-
-# Railway specific
-railway.json
-
-# Docker files (don't need to copy these)
-Dockerfile
-docker-compose.yml
-.dockerignore
-
-# Static files (if not needed in production)
-static/
-
 # Backup files
 *.bak
 *.backup
+railway.backup.json
 
-# Cache directories
-.cache/
-.pytest_cache/
+# Deployment scripts (not needed in container)
+deploy.bat
+deploy.sh
+railway-deploy.bat
+launch_*.bat
+launch_*.sh
+
+# Windows specific
+*.bat
+*.cmd
+
+# Linux specific
+*.sh
+
+# Node.js (if any)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Coverage reports
 htmlcov/
 .coverage
 .coverage.*
 coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
 
-# Node modules (if any)
-node_modules/
+# Jupyter Notebook
+.ipynb_checkpoints
 
-# Temporary directories
-tmp/
-temp/
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/

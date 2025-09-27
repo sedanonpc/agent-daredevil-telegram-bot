@@ -1,80 +1,165 @@
 # ===========================================
-# Agent Daredevil Telegram Bot - Docker Compose
+# Agent Daredevil - Production Docker Compose
 # ===========================================
-# For local development and testing
+# Optimized for Railway deployment and local testing
 
 version: '3.8'
 
 services:
-  # Main Telegram Bot
-  telegram-bot:
+  # Main Web Messenger Server (Primary Service for Railway)
+  web-messenger:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: agent-daredevil-bot
+    container_name: agent-daredevil-web-messenger
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
+    command: ["python", "launch_web_messenger.py"]
     environment:
-      # Load environment variables from .env file
+      # Core Telegram Configuration
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_PHONE_NUMBER=${TELEGRAM_PHONE_NUMBER}
+      
+      # LLM Provider Configuration
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY}
       - GOOGLE_CLOUD_PROJECT_ID=${GOOGLE_CLOUD_PROJECT_ID}
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      
+      # Model Configuration
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - VERTEX_AI_MODEL=${VERTEX_AI_MODEL:-google/gemini-2.0-flash-001}
+      
+      # Memory and Session Configuration
       - MEMORY_DB_PATH=/app/data/memory.db
       - USE_MEMORY=${USE_MEMORY:-True}
       - SESSION_TIMEOUT_HOURS=${SESSION_TIMEOUT_HOURS:-24}
       - MAX_SESSION_MESSAGES=${MAX_SESSION_MESSAGES:-50}
+      
+      # RAG Configuration
       - CHROMA_DB_PATH=/app/data/chroma_db
       - USE_RAG=${USE_RAG:-True}
       - CHARACTER_CARD_PATH=/app/cryptodevil.character.json
-      - CRAWLER_DB_PATH=/app/data/basketball_crawler.db
-      - CRAWLER_MAX_PAGES=${CRAWLER_MAX_PAGES:-100}
-      - CRAWLER_DELAY=${CRAWLER_DELAY:-4.0}
-      - CRAWLER_THREADS=${CRAWLER_THREADS:-2}
+      
+      # Voice Processing Configuration
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
       - USE_VOICE_FEATURES=${USE_VOICE_FEATURES:-True}
       - ELEVENLABS_MODEL=${ELEVENLABS_MODEL:-eleven_monolingual_v1}
       - ELEVENLABS_STABILITY=${ELEVENLABS_STABILITY:-0.5}
       - ELEVENLABS_SIMILARITY_BOOST=${ELEVENLABS_SIMILARITY_BOOST:-0.5}
+      
+      # Application Configuration
+      - PORT=8000
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
       - DEBUG=${DEBUG:-False}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       # Persist data between container restarts
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./temp_voice_files:/app/temp_voice_files
+      - daredevil_data:/app/data
+      - daredevil_logs:/app/logs
+      - daredevil_temp:/app/temp_voice_files
       # Mount session files for development
-      - ./daredevil_session.session:/app/daredevil_session.session
-      - ./session_name.session:/app/session_name.session
+      - ./daredevil_session.session:/app/daredevil_session.session:ro
+      - ./session_name.session:/app/session_name.session:ro
     ports:
-      # Expose ports for web services if needed
       - "8000:8000"
-      - "8501:8501"  # RAG Manager
-      - "8502:8502"  # Knowledge Visualizer
     networks:
       - daredevil-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import telethon; print('Health check passed')"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
 
-  # RAG Manager Web Interface (Optional)
+  # Telegram Bot Service (Background Service)
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent-daredevil-bot
+    restart: unless-stopped
+    command: ["python", "telegram_bot_rag.py"]
+    environment:
+      # Core Telegram Configuration
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELEGRAM_PHONE_NUMBER=${TELEGRAM_PHONE_NUMBER}
+      
+      # LLM Provider Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY}
+      - GOOGLE_CLOUD_PROJECT_ID=${GOOGLE_CLOUD_PROJECT_ID}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      
+      # Model Configuration
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - VERTEX_AI_MODEL=${VERTEX_AI_MODEL:-google/gemini-2.0-flash-001}
+      
+      # Memory and Session Configuration
+      - MEMORY_DB_PATH=/app/data/memory.db
+      - USE_MEMORY=${USE_MEMORY:-True}
+      - SESSION_TIMEOUT_HOURS=${SESSION_TIMEOUT_HOURS:-24}
+      - MAX_SESSION_MESSAGES=${MAX_SESSION_MESSAGES:-50}
+      
+      # RAG Configuration
+      - CHROMA_DB_PATH=/app/data/chroma_db
+      - USE_RAG=${USE_RAG:-True}
+      - CHARACTER_CARD_PATH=/app/cryptodevil.character.json
+      
+      # Voice Processing Configuration
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      - USE_VOICE_FEATURES=${USE_VOICE_FEATURES:-True}
+      - ELEVENLABS_MODEL=${ELEVENLABS_MODEL:-eleven_monolingual_v1}
+      - ELEVENLABS_STABILITY=${ELEVENLABS_STABILITY:-0.5}
+      - ELEVENLABS_SIMILARITY_BOOST=${ELEVENLABS_SIMILARITY_BOOST:-0.5}
+      
+      # Application Configuration
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - DEBUG=${DEBUG:-False}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Share data with web messenger
+      - daredevil_data:/app/data
+      - daredevil_logs:/app/logs
+      - daredevil_temp:/app/temp_voice_files
+      # Mount session files for development
+      - ./daredevil_session.session:/app/daredevil_session.session:ro
+      - ./session_name.session:/app/session_name.session:ro
+    networks:
+      - daredevil-network
+    depends_on:
+      - web-messenger
+    profiles:
+      - telegram-bot
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # RAG Manager Web Interface (Optional - Development Only)
   rag-manager:
     build:
       context: .
@@ -86,19 +171,25 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CHROMA_DB_PATH=/app/data/chroma_db
       - USE_RAG=True
+      - PYTHONUNBUFFERED=1
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - daredevil_data:/app/data
+      - daredevil_logs:/app/logs
     ports:
       - "8501:8501"
     networks:
       - daredevil-network
     depends_on:
-      - telegram-bot
+      - web-messenger
     profiles:
       - web-interfaces
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
 
-  # Knowledge Visualizer (Optional)
+  # Knowledge Visualizer (Optional - Development Only)
   knowledge-visualizer:
     build:
       context: .
@@ -110,52 +201,32 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CHROMA_DB_PATH=/app/data/chroma_db
       - USE_RAG=True
+      - PYTHONUNBUFFERED=1
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - daredevil_data:/app/data
+      - daredevil_logs:/app/logs
     ports:
       - "8502:8502"
     networks:
       - daredevil-network
     depends_on:
-      - telegram-bot
+      - web-messenger
     profiles:
       - web-interfaces
-
-  # Web Messenger Server (Optional)
-  web-messenger:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: agent-daredevil-web-messenger
-    restart: unless-stopped
-    command: ["python", "web_messenger_server.py"]
-    environment:
-      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
-      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
-      - TELEGRAM_PHONE_NUMBER=${TELEGRAM_PHONE_NUMBER}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - USE_RAG=${USE_RAG:-True}
-      - CHROMA_DB_PATH=/app/data/chroma_db
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-    ports:
-      - "8080:8080"
-    networks:
-      - daredevil-network
-    depends_on:
-      - telegram-bot
-    profiles:
-      - web-interfaces
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
 
 networks:
   daredevil-network:
     driver: bridge
 
 volumes:
-  data:
+  daredevil_data:
     driver: local
-  logs:
+  daredevil_logs:
+    driver: local
+  daredevil_temp:
     driver: local

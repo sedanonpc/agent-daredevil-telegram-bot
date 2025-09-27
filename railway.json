@@ -20,6 +20,15 @@
     "healthcheckPath": "/health",
     "healthcheckTimeout": 30,
     "healthcheckInterval": 60,
-    "healthcheckStartPeriod": 120
+    "healthcheckStartPeriod": 120,
+    "environment": {
+      "PYTHONUNBUFFERED": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PORT": "8000",
+      "USE_VOICE_FEATURES": "False",
+      "USE_RAG": "True",
+      "USE_MEMORY": "True",
+      "DEBUG": "False"
+    }
   }
 }
