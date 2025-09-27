@@ -173,16 +173,13 @@ class OpenAIProvider(LLMProvider):
 class GeminiProvider(LLMProvider):
     """Google AI Gemini provider implementation."""
     
-    def __init__(self, api_key: str, model: str = "gemini-1.5-pro"):
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp"):
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         self.genai = genai
         self.model_name = model
         
-        # Check if using Gemini 2.5 models
-        if model == "gemini-2.5-flash" or model == "gemini-2.5-pro":
-            logger.info(f"Using Gemini 2.5 model: {model}")
-        
+        # Simple model initialization - no custom safety settings
         self.model = genai.GenerativeModel(model)
         logger.info(f"Gemini provider initialized with model: {model}")
     
@@ -228,21 +225,6 @@ class GeminiProvider(LLMProvider):
     ) -> str:
         """Generate response using Gemini API."""
         try:
-            # Add instruction to keep responses concise (3-5 sentences)
-            system_msg = {"role": "system", "content": "Keep your responses concise, using only 3-5 sentences. Only use up to 6 sentences for data-heavy responses, with the last sentence including a data summary."}
-            
-            # Check if there's already a system message
-            has_system = any(msg["role"] == "system" for msg in messages)
-            
-            # If there's a system message, modify it; otherwise add our own
-            if has_system:
-                for i, msg in enumerate(messages):
-                    if msg["role"] == "system":
-                        messages[i]["content"] = msg["content"] + "\n\n" + system_msg["content"]
-                        break
-            else:
-                messages = [system_msg] + messages
-            
             # Convert messages to Gemini format
             gemini_messages = self._convert_messages(messages)
             
@@ -303,7 +285,7 @@ class GeminiProvider(LLMProvider):
                 
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
-            raise
+            return "I encountered an error processing your request. Please try again."
     
     async def generate_stream(
         self, 
@@ -555,7 +537,7 @@ class LLMProviderFactory:
             if not api_key:
                 raise ValueError("GOOGLE_AI_API_KEY environment variable is required for Gemini provider")
             
-            model = os.getenv('GEMINI_MODEL', 'gemini-1.5-pro')
+            model = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash-exp')
             return GeminiProvider(api_key, model)
         
         elif provider_type == 'vertex_ai':
