@@ -1,13 +1,13 @@
 @echo off
-title Telegram Bot & RAG Manager Launcher
+title Agent Daredevil Launcher
 echo.
 echo ====================================
-echo  Telegram Bot ^& RAG Manager
+echo  Agent Daredevil - Telegram Bot
 echo ====================================
 echo.
-echo Starting launcher...
+echo Starting bot...
 echo.
-python launcher.py
+python launch_daredevil.py
 echo.
 echo Press any key to exit...
 pause >nul 

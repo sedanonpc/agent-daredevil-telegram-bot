@@ -63,40 +63,13 @@ check_environment() {
 deploy_railway_native() {
     print_status "Deploying with Railway native setup..."
     
-    # Ensure we're using the native railway.json
-    if [ -f "railway.docker.json" ]; then
-        cp railway.json railway.docker.backup.json 2>/dev/null || true
+    # Verify railway.json exists
+    if [ ! -f "railway.json" ]; then
+        print_error "railway.json not found. Please ensure railway.json exists."
+        exit 1
     fi
     
-    if [ -f "railway.native.json" ]; then
-        cp railway.native.json railway.json
-    else
-        # Create native railway.json
-        cat > railway.json << EOF
-{
-  "\$schema": "https://railway.com/railway.schema.json",
-  "build": {
-    "builder": "RAILPACK"
-  },
-  "deploy": {
-    "startCommand": "python telegram_bot_rag.py",
-    "runtime": "V2",
-    "numReplicas": 1,
-    "sleepApplication": false,
-    "useLegacyStacker": false,
-    "multiRegionConfig": {
-      "us-east4-eqdc4a": {
-        "numReplicas": 1
-      }
-    },
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10
-  }
-}
-EOF
-    fi
-    
-    print_success "Railway native configuration ready"
+    print_success "Railway configuration verified"
     print_status "Push to your Railway-connected repository to deploy"
 }
 
@@ -110,8 +83,11 @@ deploy_railway_docker() {
         exit 1
     fi
     
-    # Use Docker railway configuration
-    cp railway.docker.json railway.json
+    # Verify railway.json exists
+    if [ ! -f "railway.json" ]; then
+        print_error "railway.json not found. Please ensure railway.json exists."
+        exit 1
+    fi
     
     print_success "Docker configuration ready"
     print_status "Push to your Railway-connected repository to deploy"

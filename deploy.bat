@@ -96,7 +96,11 @@ if not exist "Dockerfile" (
     exit /b 1
 )
 
-copy railway.docker.json railway.json >nul
+if not exist "railway.json" (
+    echo %ERROR% railway.json not found. Please ensure railway.json exists.
+    exit /b 1
+)
+
 echo %SUCCESS% Docker configuration ready
 echo %INFO% Push to your Railway-connected repository to deploy
 goto :eof

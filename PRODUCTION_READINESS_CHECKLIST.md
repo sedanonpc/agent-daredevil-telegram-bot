@@ -52,7 +52,7 @@
 - [x] **Health Checks**: Container health monitoring
 
 #### 8. Railway Integration
-- [x] **Railway Config**: railway.docker.json configured
+- [x] **Railway Config**: railway.json configured
 - [x] **Build Process**: Dockerfile builder specified
 - [x] **Start Command**: telegram_bot_rag.py
 - [x] **Restart Policy**: ON_FAILURE with 10 retries
@@ -95,8 +95,7 @@ cp env.example .env
 # Option A: Use deployment script
 railway-deploy.bat
 
-# Option B: Manual deployment
-copy railway.docker.json railway.json
+# Option B: Manual deployment (verify railway.json is configured correctly)
 git add .
 git commit -m "Deploy with Docker configuration"
 git push origin main
@@ -205,7 +204,7 @@ docker stats agent-daredevil-bot
 ### Quick Rollback
 ```bash
 # Switch back to native Railway deployment
-copy railway.native.json railway.json
+# Verify railway.json is configured for native deployment
 git add railway.json
 git commit -m "Rollback to native Railway deployment"
 git push origin main

@@ -74,7 +74,7 @@ railway-deploy.bat check
 
 # Or manually check:
 # 1. Ensure .env file exists with all required variables
-# 2. Verify Dockerfile and railway.docker.json exist
+# 2. Verify Dockerfile and railway.json exist
 # 3. Check git repository is connected to Railway
 ```
 
@@ -99,7 +99,7 @@ USE_VOICE_FEATURES=True
 railway-deploy.bat
 
 # Manual way
-copy railway.docker.json railway.json
+# Verify railway.json is configured for Docker deployment
 git add railway.json Dockerfile .dockerignore
 git commit -m "Deploy with Docker configuration for production"
 git push origin main
@@ -248,7 +248,7 @@ Logs: Railway managed logging
 docker build -t test . --no-cache
 
 # Verify all files are present
-ls -la Dockerfile railway.docker.json
+ls -la Dockerfile railway.json
 ```
 
 ### Issue 2: Bot Won't Start
@@ -314,7 +314,7 @@ If deployment fails or issues occur:
 ### Quick Rollback
 ```bash
 # Switch back to native Railway setup
-copy railway.native.json railway.json
+# Verify railway.json is configured for native deployment
 git add railway.json
 git commit -m "Rollback to native Railway deployment"
 git push origin main

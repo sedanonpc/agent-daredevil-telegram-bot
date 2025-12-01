@@ -112,6 +112,10 @@ test_results/
 test_data/
 crawl_results.json
 
+# Temporary voice files
+temp_voice_files/
+*.mp3
+
 # Large files that shouldn't be in repo
 *.zip
 *.tar.gz

@@ -1,13 +1,13 @@
 #!/bin/bash
 
 echo "===================================="
-echo " Telegram Bot & RAG Manager"
+echo " Agent Daredevil - Telegram Bot"
 echo "===================================="
 echo ""
-echo "Starting launcher..."
+echo "Starting bot..."
 echo ""
 
-python3 launcher.py
+python3 launch_daredevil.py
 
 echo ""
-echo "Launcher stopped." 
+echo "Bot stopped." 

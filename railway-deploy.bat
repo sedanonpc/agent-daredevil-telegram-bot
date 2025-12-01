@@ -53,27 +53,17 @@ if not exist "Dockerfile" (
     exit /b 1
 )
 
-REM Check if railway.docker.json exists
-if not exist "railway.docker.json" (
-    echo [ERROR] railway.docker.json not found!
-    echo Please ensure railway.docker.json exists in the current directory.
+echo [INFO] Docker configuration files verified
+
+REM Verify railway.json exists
+if not exist "railway.json" (
+    echo [ERROR] railway.json not found!
+    echo Please ensure railway.json exists in the current directory.
     pause
     exit /b 1
 )
 
-echo [INFO] Docker configuration files verified
-
-REM Backup current railway.json if it exists
-if exist "railway.json" (
-    echo [INFO] Backing up current railway.json...
-    copy railway.json railway.backup.json >nul
-)
-
-REM Switch to Docker configuration
-echo [INFO] Switching to Docker configuration...
-copy railway.docker.json railway.json >nul
-
-echo [SUCCESS] Railway configuration updated for Docker deployment
+echo [SUCCESS] Railway configuration verified
 
 REM Check if git is available
 where git >nul 2>&1

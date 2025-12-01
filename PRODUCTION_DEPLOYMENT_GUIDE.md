@@ -21,12 +21,14 @@ git push origin main
 **Best for**: Environment consistency, advanced configuration
 
 ```bash
-# Switch to Docker deployment
-cp railway.docker.json railway.json
+# Verify railway.json is configured for Docker deployment
+# Ensure railway.json has "builder": "DOCKERFILE" configured
 git add railway.json Dockerfile .dockerignore
 git commit -m "Add Docker support for production deployment"
 git push origin main
 ```
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
+read_file
 
 ### Option 3: Local Docker Development
 **Status**: ✅ Ready to use
